@@ -17,8 +17,8 @@
   "scripts": {
     "mcp:server": "node scripts/mcp-server.mjs",
     "setup:codex": "node scripts/onboard.mjs --target codex",
-    "setup:opencode": "node scripts/onboard.mjs --target opencode",
     "setup:claudecode": "node scripts/onboard.mjs --target claudecode",
+    "setup:claudedesktop": "node scripts/onboard.mjs --target claudedesktop",
     "onboard": "node scripts/onboard.mjs",
     "postinstall": "node scripts/postinstall.js"
   },

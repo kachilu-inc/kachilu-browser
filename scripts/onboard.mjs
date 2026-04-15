@@ -15,6 +15,7 @@ import { spawnSync } from "node:child_process";
 import { createInterface } from "node:readline/promises";
 import os from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getBridgedEnvValue } from "./env-prefix-bridge.mjs";
 
@@ -24,31 +25,14 @@ const skillSource = join(repoRoot, "skills", "kachilu-browser");
 const defaultCodexHome = join(os.homedir(), ".codex");
 const defaultClaudeHome = join(os.homedir(), ".claude");
 const defaultClaudeConfig = join(os.homedir(), ".claude.json");
-const allTargets = ["codex", "opencode", "claudecode"];
+const allTargets = ["codex", "claudecode", "claudedesktop"];
 const managedStart = "# >>> kachilu-browser managed >>>";
 const managedEnd = "# <<< kachilu-browser managed <<<";
 const currentSection = "mcp_servers.kachilu_browser";
+const claudeDesktopWindowsPackageName = "Claude_pzs8sxrjxfjjc";
 
 function getEnvValue(name) {
   return getBridgedEnvValue(process.env, name);
-}
-
-function detectDefaultOpencodeConfig() {
-  const envConfig = process.env.OPENCODE_CONFIG?.trim();
-  if (envConfig) return envConfig;
-
-  const candidates = [
-    join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
-    join(os.homedir(), ".config", "opencode", "opencode.json"),
-    join(os.homedir(), ".local", "share", "opencode", "opencode.jsonc"),
-    join(os.homedir(), ".local", "share", "opencode", "opencode.json"),
-  ];
-
-  for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
-  }
-
-  return candidates[0];
 }
 
 function isWslEnvironment() {
@@ -98,6 +82,80 @@ function resolveWslWindowsLocalAppData() {
   if (!line) return "";
 
   return windowsPathToWslPath(line) || line;
+}
+
+function resolveWslWindowsEnvPath(name) {
+  if (!isWslEnvironment()) return null;
+
+  const result = spawnSync("cmd.exe", ["/C", `echo %${name}%`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  if (result.status !== 0) return null;
+
+  const windowsPath = findWindowsPathLine(result.stdout);
+  if (!windowsPath) return null;
+
+  return {
+    windowsPath,
+    localPath: windowsPathToWslPath(windowsPath) || windowsPath,
+  };
+}
+
+function wslPathToWindowsPath(pathValue) {
+  const raw = String(pathValue || "").trim();
+  if (!raw) return "";
+
+  const mountMatch = raw.match(/^\/mnt\/([A-Za-z])(?:\/(.*))?$/);
+  if (mountMatch) {
+    const drive = mountMatch[1].toUpperCase();
+    const rest = (mountMatch[2] || "").replaceAll("/", "\\");
+    return `${drive}:\\${rest}`;
+  }
+
+  if (!isWslEnvironment()) return raw;
+
+  const result = spawnSync("wslpath", ["-w", raw], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  if (result.status === 0) {
+    const converted = result.stdout.trim();
+    if (converted) return converted;
+  }
+
+  return raw;
+}
+
+function resolveWslWindowsCommand(command) {
+  const result = spawnSync("cmd.exe", ["/C", `where ${command}`], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  if (result.status !== 0) return "";
+
+  return findWindowsPathLine(result.stdout) || "";
+}
+
+function resolveWslWindowsGlobalPackagePath(...packageRelativeParts) {
+  const result = spawnSync("cmd.exe", ["/C", "npm root -g"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+
+  if (result.status !== 0) return "";
+
+  const root = findWindowsPathLine(result.stdout);
+  if (!root) return "";
+
+  const windowsPath = win32.join(root, ...packageRelativeParts);
+  const localPath = windowsPathToWslPath(windowsPath);
+  if (localPath && existsSync(localPath)) return windowsPath;
+
+  return "";
 }
 
 function resolveWslWindowsUserProfile(windowsLocalAppData) {
@@ -263,23 +321,12 @@ function ensureWslMirroredNetworking(options) {
   };
 }
 
-function detectDefaultTargets(candidates) {
-  const detected = [];
+function targetNeedsWslBridge(target) {
+  return target === "codex" || target === "claudecode";
+}
 
-  if (existsSync(candidates.codexHome)) {
-    detected.push("codex");
-  }
-
-  if (existsSync(candidates.claudeHome) || existsSync(candidates.claudeConfig)) {
-    detected.push("claudecode");
-  }
-
-  const opencodeDir = dirname(candidates.opencodeConfig);
-  if (existsSync(candidates.opencodeConfig) || existsSync(opencodeDir)) {
-    detected.push("opencode");
-  }
-
-  return detected.length > 0 ? detected : ["codex"];
+function targetsNeedWslBridge(targets) {
+  return targets.some((target) => targetNeedsWslBridge(target));
 }
 
 function requireValue(argv, index, flag) {
@@ -297,17 +344,19 @@ function printHelp() {
 
 Targets:
   codex       Install Codex skill + ~/.codex/config.toml MCP entry
-  opencode    Install ~/.config/opencode/opencode.json(c) MCP entry
   claudecode  Install Claude Code skill + ~/.claude.json MCP entry
+  claudedesktop
+              Install Claude Desktop local MCP entry
   all         Install every target above
 
 Options:
   --target <name>                      Target to onboard (repeatable or comma-separated)
-                                        If omitted, auto-detect installed hosts and fall back to codex
+                                        Aliases: claude-code, claude-desktop
+                                        If omitted in a TTY, onboard prompts for a target
   --codex-home <path>                  Codex home directory (default: ~/.codex)
   --claude-home <path>                 Claude Code home for skills (default: ~/.claude)
   --claude-config <path>               Claude Code MCP config (default: ~/.claude.json)
-  --opencode-config <path>             OpenCode config (default: ~/.config/opencode/opencode.jsonc)
+  --claude-desktop-config <path>       Claude Desktop MCP config override
   --node <path|command>                Node executable/command for MCP (default: node)
   --kachilu-browser-bin <path>         Persist KACHILU_BROWSER_BIN into MCP env
   --auto-connect-target <value>        Persist KACHILU_BROWSER_AUTO_CONNECT_TARGET into MCP env
@@ -325,19 +374,33 @@ Environment inputs:
   KACHILU_BROWSER_SOCKET_DIR
 
 WSL2 defaults:
-  If no explicit auto-connect env is provided, onboard persists:
+  For Codex and Claude Code, if no explicit auto-connect env is provided,
+  onboard persists:
   KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows
   KACHILU_BROWSER_WINDOWS_LOCALAPPDATA=<auto-detected via cmd.exe>
-  When targeting Windows browsers, onboard also ensures %USERPROFILE%\\.wslconfig
-  has [wsl2] networkingMode=mirrored and reports when WSL must be restarted.
+  When those WSL2 targets use Windows browsers, onboard also ensures
+  %USERPROFILE%\\.wslconfig has [wsl2] networkingMode=mirrored and reports
+  when WSL must be restarted.
 `);
+}
+
+function normalizeTargetName(rawTarget) {
+  const target = String(rawTarget || "").trim().toLowerCase();
+  switch (target) {
+    case "claude-code":
+      return "claudecode";
+    case "claude-desktop":
+      return "claudedesktop";
+    default:
+      return target;
+  }
 }
 
 function parseTargets(targetArgs) {
   const expanded = [];
   for (const rawTarget of targetArgs) {
     for (const value of rawTarget.split(",")) {
-      const target = value.trim().toLowerCase();
+      const target = normalizeTargetName(value);
       if (!target) continue;
       if (target === "all") {
         expanded.push(...allTargets);
@@ -382,20 +445,19 @@ function normalizeNodeCommand(value) {
 }
 
 async function parseArgs(argv) {
-  const opencodeConfig = detectDefaultOpencodeConfig();
   const args = {
     targets: [],
     codexHome: defaultCodexHome,
     claudeHome: defaultClaudeHome,
     claudeConfig: defaultClaudeConfig,
-    opencodeConfig,
+    claudeDesktopConfig: "",
     nodePath: "node",
+    nodePathExplicit: false,
     approvalMode: "approve",
     kachiluBrowserBin: getEnvValue("KACHILU_BROWSER_BIN"),
     autoConnectTarget: getEnvValue("KACHILU_BROWSER_AUTO_CONNECT_TARGET"),
     windowsLocalAppData: getEnvValue("KACHILU_BROWSER_WINDOWS_LOCALAPPDATA"),
     socketDir: getEnvValue("KACHILU_BROWSER_SOCKET_DIR"),
-    autoDetectedTargets: [],
     autoDetectedEnv: {},
     force: false,
     dryRun: false,
@@ -423,12 +485,14 @@ async function parseArgs(argv) {
         args.claudeConfig = resolve(requireValue(argv, i, arg));
         i += 1;
         break;
-      case "--opencode-config":
-        args.opencodeConfig = resolve(requireValue(argv, i, arg));
+      case "--claude-desktop-config":
+      case "--claudedesktop-config":
+        args.claudeDesktopConfig = resolve(requireValue(argv, i, arg));
         i += 1;
         break;
       case "--node":
         args.nodePath = normalizeNodeCommand(requireValue(argv, i, arg));
+        args.nodePathExplicit = true;
         i += 1;
         break;
       case "--kachilu-browser-bin":
@@ -477,26 +541,23 @@ async function parseArgs(argv) {
       const targetAnswer = (
         await promptWithDefault(
           rl,
-          "Onboard target(s): auto/codex/claudecode/opencode/all/skip",
-          "auto"
+          "Onboard target(s): codex/claudecode/claudedesktop/all/skip",
+          "codex"
         )
       ).toLowerCase();
 
       if (targetAnswer === "skip") {
         args.targets = [];
-      } else if (!targetAnswer || targetAnswer === "auto") {
-        args.targets = detectDefaultTargets({
-          codexHome: args.codexHome,
-          claudeHome: args.claudeHome,
-          claudeConfig: args.claudeConfig,
-          opencodeConfig: args.opencodeConfig,
-        });
-        args.autoDetectedTargets = [...args.targets];
       } else {
         args.targets = parseTargets([targetAnswer]);
       }
 
-      if (args.targets.length > 0 && isWslEnvironment() && !args.autoConnectTarget) {
+      if (
+        args.targets.length > 0 &&
+        targetsNeedWslBridge(args.targets) &&
+        isWslEnvironment() &&
+        !args.autoConnectTarget
+      ) {
         args.autoConnectTarget = await promptWithDefault(
           rl,
           "WSL2 browser target: windows/local/auto",
@@ -506,6 +567,7 @@ async function parseArgs(argv) {
 
       if (
         args.targets.length > 0 &&
+        targetsNeedWslBridge(args.targets) &&
         isWslEnvironment() &&
         args.autoConnectTarget?.toLowerCase() === "windows" &&
         !args.windowsLocalAppData
@@ -521,22 +583,22 @@ async function parseArgs(argv) {
       rl.close();
     }
   } else {
-    args.targets = detectDefaultTargets({
-      codexHome: args.codexHome,
-      claudeHome: args.claudeHome,
-      claudeConfig: args.claudeConfig,
-      opencodeConfig: args.opencodeConfig,
-    });
-    args.autoDetectedTargets = [...args.targets];
+    throw new Error("Missing --target. Run in an interactive terminal or pass --target codex, claudecode, or claudedesktop.");
   }
 
-  if (args.targets.length > 0 && isWslEnvironment() && !args.autoConnectTarget) {
+  if (
+    args.targets.length > 0 &&
+    targetsNeedWslBridge(args.targets) &&
+    isWslEnvironment() &&
+    !args.autoConnectTarget
+  ) {
     args.autoConnectTarget = "windows";
     args.autoDetectedEnv.KACHILU_BROWSER_AUTO_CONNECT_TARGET = "windows";
   }
 
   if (
     args.targets.length > 0 &&
+    targetsNeedWslBridge(args.targets) &&
     isWslEnvironment() &&
     args.autoConnectTarget.toLowerCase() === "windows" &&
     !args.windowsLocalAppData
@@ -608,21 +670,154 @@ function buildClaudeCodeConfig(options) {
   return config;
 }
 
-function buildOpenCodeConfig(options) {
-  const mcpServerPath = join(repoRoot, "scripts", "mcp-server.mjs");
-  const environment = Object.fromEntries(buildPersistedEnvEntries(options));
-  const config = {
-    type: "local",
-    command: [options.nodePath, mcpServerPath],
-    enabled: true,
-    timeout: 60000,
-  };
-
-  if (Object.keys(environment).length > 0) {
-    config.environment = environment;
+function getClaudeDesktopConfigCandidates(options) {
+  if (options.claudeDesktopConfig) {
+    return [{ path: options.claudeDesktopConfig, source: "override" }];
   }
 
-  return config;
+  if (isWslEnvironment()) {
+    const appData = resolveWslWindowsEnvPath("APPDATA");
+    const localAppData = resolveWslWindowsEnvPath("LOCALAPPDATA");
+    const candidates = [];
+
+    if (appData) {
+      candidates.push({
+        path: windowsPathToWslPath(
+          win32.join(appData.windowsPath, "Claude", "claude_desktop_config.json")
+        ),
+        windowsPath: win32.join(appData.windowsPath, "Claude", "claude_desktop_config.json"),
+        source: "windows-roaming",
+      });
+    }
+
+    if (localAppData) {
+      const packageDirWindows = win32.join(
+        localAppData.windowsPath,
+        "Packages",
+        claudeDesktopWindowsPackageName
+      );
+      const packageDirLocal = windowsPathToWslPath(packageDirWindows);
+      if (packageDirLocal && existsSync(packageDirLocal)) {
+        for (const roamingName of ["Claude-3p", "Claude"]) {
+          const windowsPath = win32.join(
+            packageDirWindows,
+            "LocalCache",
+            "Roaming",
+            roamingName,
+            "claude_desktop_config.json"
+          );
+          candidates.push({
+            path: windowsPathToWslPath(windowsPath),
+            windowsPath,
+            source: `windows-store-${roamingName}`,
+          });
+        }
+      }
+    }
+
+    const existing = candidates.find((candidate) => candidate.path && existsSync(candidate.path));
+    if (existing) return candidates;
+
+    const storeCandidate = candidates.find((candidate) => candidate.source === "windows-store-Claude-3p");
+    if (storeCandidate) {
+      return [storeCandidate, ...candidates.filter((candidate) => candidate !== storeCandidate)];
+    }
+
+    return candidates;
+  }
+
+  if (process.platform === "darwin") {
+    return [
+      {
+        path: join(
+          os.homedir(),
+          "Library",
+          "Application Support",
+          "Claude",
+          "claude_desktop_config.json"
+        ),
+        source: "macos",
+      },
+    ];
+  }
+
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || win32.join(os.homedir(), "AppData", "Roaming");
+    const localAppData =
+      process.env.LOCALAPPDATA || win32.join(os.homedir(), "AppData", "Local");
+    const candidates = [
+      {
+        path: win32.join(appData, "Claude", "claude_desktop_config.json"),
+        source: "windows-roaming",
+      },
+    ];
+    const packageDir = win32.join(localAppData, "Packages", claudeDesktopWindowsPackageName);
+
+    if (existsSync(packageDir)) {
+      for (const roamingName of ["Claude-3p", "Claude"]) {
+        candidates.push({
+          path: win32.join(
+            packageDir,
+            "LocalCache",
+            "Roaming",
+            roamingName,
+            "claude_desktop_config.json"
+          ),
+          source: `windows-store-${roamingName}`,
+        });
+      }
+    }
+
+    const existing = candidates.find((candidate) => existsSync(candidate.path));
+    if (existing) return candidates;
+
+    const storeCandidate = candidates.find((candidate) => candidate.source === "windows-store-Claude-3p");
+    if (storeCandidate) {
+      return [storeCandidate, ...candidates.filter((candidate) => candidate !== storeCandidate)];
+    }
+
+    return candidates;
+  }
+
+  return [
+    {
+      path: join(os.homedir(), ".config", "Claude", "claude_desktop_config.json"),
+      source: "linux",
+    },
+  ];
+}
+
+function resolveClaudeDesktopConfigPath(options) {
+  const candidates = getClaudeDesktopConfigCandidates(options).filter((candidate) => candidate.path);
+  const existing = candidates.find((candidate) => existsSync(candidate.path));
+  return (existing ?? candidates[0])?.path;
+}
+
+function resolveClaudeDesktopNodeCommand(options) {
+  if (options.nodePathExplicit) return options.nodePath;
+  if (isWslEnvironment()) return resolveWslWindowsCommand("node") || "node";
+  return options.nodePath;
+}
+
+function resolveClaudeDesktopMcpServerPath() {
+  if (isWslEnvironment()) {
+    const globalPackagePath = resolveWslWindowsGlobalPackagePath(
+      "kachilu-browser",
+      "scripts",
+      "mcp-server.mjs"
+    );
+    if (globalPackagePath) return globalPackagePath;
+    return wslPathToWindowsPath(join(repoRoot, "scripts", "mcp-server.mjs"));
+  }
+
+  return join(repoRoot, "scripts", "mcp-server.mjs");
+}
+
+function buildClaudeDesktopConfig(options) {
+  return {
+    command: resolveClaudeDesktopNodeCommand(options),
+    args: [resolveClaudeDesktopMcpServerPath(options)],
+  };
 }
 
 function findManagedBlockRange(configText) {
@@ -910,21 +1105,23 @@ function updateClaudeCodeConfig(options) {
   writeJsonConfig(options.claudeConfig, next, options);
 }
 
-function updateOpenCodeConfig(options) {
-  const current = readJsonConfig(options.opencodeConfig);
+function updateClaudeDesktopConfig(options) {
+  const configPath = resolveClaudeDesktopConfigPath(options);
+  if (!configPath) {
+    throw new Error("Could not resolve Claude Desktop config path.");
+  }
+
+  const current = readJsonConfig(configPath);
   const next = {
-    ...(current.$schema ? current : { ...current, $schema: "https://opencode.ai/config.json" }),
-    mcp: {
-      ...(current.mcp && typeof current.mcp === "object" ? current.mcp : {}),
-      "kachilu-browser": buildOpenCodeConfig(options),
+    ...current,
+    mcpServers: {
+      ...(current.mcpServers && typeof current.mcpServers === "object" ? current.mcpServers : {}),
+      "kachilu-browser": buildClaudeDesktopConfig(options),
     },
   };
 
-  if (!next.$schema) {
-    next.$schema = "https://opencode.ai/config.json";
-  }
-
-  writeJsonConfig(options.opencodeConfig, next, options);
+  writeJsonConfig(configPath, next, options);
+  return configPath;
 }
 
 function onboardCodex(options) {
@@ -949,20 +1146,27 @@ function onboardClaudeCode(options) {
   };
 }
 
-function onboardOpenCode(options) {
-  updateOpenCodeConfig(options);
+function onboardClaudeDesktop(options) {
+  const configPath = updateClaudeDesktopConfig(options);
 
   return {
-    configPath: options.opencodeConfig,
+    configPath,
+    skillReleaseAsset: "kachilu-browser-skill.zip",
+    skillInstall: "Download kachilu-browser-skill.zip from the GitHub Release and upload it in Claude Desktop > Customize > Skills.",
   };
 }
 
 export async function main(argv = process.argv.slice(2)) {
   const options = await parseArgs(argv);
-  const wslNetworking = ensureWslMirroredNetworking(options);
+  const wslNetworking = targetsNeedWslBridge(options.targets)
+    ? ensureWslMirroredNetworking(options)
+    : {
+        status: "skipped",
+        reason: "no-wsl-bridge-target",
+        restartRequired: false,
+      };
   const summary = {
     targets: options.targets,
-    autoDetectedTargets: options.autoDetectedTargets,
     mcpServer: join(repoRoot, "scripts", "mcp-server.mjs"),
     dryRun: options.dryRun,
     persistedEnv: {
@@ -981,11 +1185,11 @@ export async function main(argv = process.argv.slice(2)) {
       case "codex":
         summary.results.codex = onboardCodex(options);
         break;
-      case "opencode":
-        summary.results.opencode = onboardOpenCode(options);
-        break;
       case "claudecode":
         summary.results.claudecode = onboardClaudeCode(options);
+        break;
+      case "claudedesktop":
+        summary.results.claudedesktop = onboardClaudeDesktop(options);
         break;
       default:
         throw new Error(`Unsupported target: ${target}`);

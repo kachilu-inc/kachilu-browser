@@ -27,12 +27,13 @@ run `kachilu-browser onboard`. Target selection and host setup live in
 ## Onboarding targets
 
 - If `--target` is omitted in an interactive terminal, `kachilu-browser onboard` prompts for the host target
-- In non-interactive runs, omitted `--target` auto-detects installed hosts and falls back to `codex`
-- On WSL2, `onboard` persists `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows` and auto-detected `KACHILU_BROWSER_WINDOWS_LOCALAPPDATA` unless you override them
+- In non-interactive runs, pass `--target codex`, `--target claudecode`, or `--target claudedesktop`
+- For Codex and Claude Code on WSL2, `onboard` persists `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows` and auto-detected `KACHILU_BROWSER_WINDOWS_LOCALAPPDATA` unless you override them
 - When targeting Windows browsers from WSL2, `onboard` also ensures `%USERPROFILE%\.wslconfig` has `[wsl2] networkingMode=mirrored` and reports when `wsl --shutdown` is required
 - `codex`: writes `~/.codex/config.toml` and links `~/.codex/skills/kachilu-browser`
-- `opencode`: writes `~/.config/opencode/opencode.json(c)`
 - `claudecode`: writes `~/.claude.json` and links `~/.claude/skills/kachilu-browser`
+- `claudedesktop`: writes the Claude Desktop local MCP config. Use `claude-desktop` as an equivalent alias.
+- Claude Desktop Skills are distributed as `kachilu-browser-skill.zip` on GitHub Releases and must be uploaded through Claude Desktop's Skills UI.
 
 ## MCP control plane
 
