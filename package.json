@@ -1,7 +1,7 @@
 {
   "name": "kachilu-browser",
   "version": "0.0.3",
-  "description": "Browser automation CLI for AI agents",
+  "description": "Human-like browser automation CLI for AI agents",
   "type": "module",
   "files": [
     "bin/kachilu-browser.js",
@@ -9,6 +9,8 @@
     "scripts",
     "skills/kachilu-browser",
     "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
     "install.sh"
   ],
   "bin": {
@@ -31,7 +33,7 @@
     "cli",
     "agent"
   ],
-  "license": "Apache-2.0",
+  "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kachilu-inc/kachilu-browser.git"
