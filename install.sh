@@ -285,6 +285,9 @@ install_bundle_files() {
   cp "${source_dir}/scripts/onboard.mjs" "${bundle_dir}/scripts/onboard.mjs"
   cp "${source_dir}/scripts/mcp-server.mjs" "${bundle_dir}/scripts/mcp-server.mjs"
   cp "${source_dir}/scripts/setup-codex.mjs" "${bundle_dir}/scripts/setup-codex.mjs"
+  rm -rf "${bundle_dir}/skill-data"
+  mkdir -p "${bundle_dir}/skill-data"
+  cp -R "${source_dir}/skill-data/core" "${bundle_dir}/skill-data/core"
   rm -rf "${bundle_dir}/skills/kachilu-browser"
   cp -R "${source_dir}/skills/kachilu-browser" "${bundle_dir}/skills/kachilu-browser"
 

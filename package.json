@@ -1,12 +1,13 @@
 {
   "name": "kachilu-browser",
-  "version": "0.0.3",
-  "description": "Human-like browser automation CLI for AI agents",
+  "version": "0.0.4",
+  "description": "Browser automation CLI for AI agents",
   "type": "module",
   "files": [
     "bin/kachilu-browser.js",
     "bin/kachilu-browser-*",
     "scripts",
+    "skill-data/core",
     "skills/kachilu-browser",
     "README.md",
     "LICENSE",
