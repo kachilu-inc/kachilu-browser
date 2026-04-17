@@ -26,7 +26,7 @@
 
 ### Contributors
 
-- @tmatsuzaki
+- Kachilu team
 
 ## 0.0.3
 
