@@ -2,6 +2,10 @@
 
 ## 0.0.4
 
+### Breaking Changes
+
+- Removed the public `keyboard inserttext` and JSON `inserttext` command surfaces. Use `keyboard type` for focused rich editors and `fill` for ordinary inputs.
+
 ### New Features
 
 - Integrated upstream `agent-browser` v0.26.0, including the `doctor` command, stable tab ids and labels, config JSON schema generation, and the upstream `core` skill model.

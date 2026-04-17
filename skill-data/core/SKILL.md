@@ -11,111 +11,55 @@ Playwright or Puppeteer dependency. Accessibility-tree snapshots with compact
 `@eN` refs let agents interact with pages in ~200-400 tokens instead of
 parsing raw HTML.
 
-Most normal web tasks (navigate, read, click, fill, extract, screenshot) are
-covered here. The release package ships this core runtime skill only.
+Most normal web tasks (navigate, read, click, fill, extract, screenshot) are covered here.
 
-## Kachilu defaults
+The installed `skills/kachilu-browser/SKILL.md` is only a discovery stub. This
+core guide is the runtime source of truth for Kachilu interaction defaults,
+MCP-first routing, CAPTCHA workflow, troubleshooting, and command usage.
 
-### MCP-first routing
+## Interaction Priority
 
-If MCP tools are available, use them before raw shell commands. Call
-`kachilu_browser_prepare_workspace` once, then reuse the returned `session`
-with `kachilu_browser_exec` for `batch`, `snapshot`, `click`, `fill`, `wait`,
-and other follow-up commands.
+Human-like interaction is the default and strongly preferred approach.
 
-Keep the MCP route after context compaction, resume, or a long interruption.
-This matters on WSL2 because MCP can preserve host-managed browser settings
-such as `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows` and
-`KACHILU_BROWSER_WINDOWS_LOCALAPPDATA`. Raw shell commands from WSL can miss
-that setup and control a WSL-local browser instead of the intended Windows
-browser.
+- Prefer visible user actions first: `open`, `snapshot`, `click`, `fill`, `type`, `scroll`, `press`, `wait`, `tab`, `screenshot`.
+- Re-snapshot after each meaningful page change and continue from what is actually visible on screen.
+- For feeds and dynamic apps such as X, prefer repeated `scroll` + `wait` + `snapshot` cycles over DOM scraping.
+- For social sites and logged-in web apps, prefer the visible UI flow: open the site or search page, click the search box, type the query, press Enter, switch visible tabs/filters, then inspect what appears.
+- Do not construct direct search/result URLs such as `https://x.com/search?...` as the default path. Use direct URLs only when the visible UI path is unavailable, ambiguous, or explicitly requested, and state why the fallback is needed.
+- Pace actions like a human operator. Wait after page loads, searches, filter changes, and scrolls before observing again; avoid rapid query fan-out, repeated navigations, or one-search-per-second loops.
+- For post, comment, message, and other rich composer fields, click the visible editor first and use `keyboard type` at the current focus. Use `fill` only for ordinary form fields such as plain inputs and textareas, or after verifying the composer behaves like one.
+- Before clicking a publish, send, save, or submit control from a composer, re-snapshot and confirm the intended body appears once in the focused or visibly active composer.
+- Use `eval`, raw DOM extraction, or page-internal JavaScript only as a last resort when human-like interaction is clearly insufficient.
 
-Use raw `kachilu-browser` only when MCP tools are unavailable, when the user
-explicitly asks for CLI commands, or when the task intentionally targets a
-local browser process.
+If there is any doubt, choose the more human-like path.
 
-### Human-like interaction
+## MCP-First Routing
 
-Prefer visible user actions: `open`, `snapshot`, `click`, `fill`, `type`,
-`scroll`, `press`, `wait`, `tab`, and `screenshot`. Re-snapshot after each
-meaningful page change and continue from what is actually visible.
+Before running any browser command, choose the control plane.
 
-For logged-in apps, social feeds, and rich web editors, use the visible UI
-flow before direct URLs, DOM scraping, or `eval`. Click the visible editor and
-use `keyboard type` for rich composer fields. Use `fill` for ordinary inputs
-and textareas. Before clicking publish, send, save, or submit, re-snapshot and
-confirm the intended body appears once in the active composer.
+1. If MCP tools are available, use MCP instead of shell commands.
+2. In Codex, the callable tools may be exposed as `mcp__kachilu_browser__kachilu_browser_prepare_workspace` and `mcp__kachilu_browser__kachilu_browser_exec`, or under the `mcp__agent_browser__...` server namespace with the same `kachilu_browser_*` tool names.
+3. Call `kachilu_browser_prepare_workspace` once, then use `kachilu_browser_exec` for `batch`, `snapshot`, `click`, `fill`, `wait`, and other follow-up commands. Reuse the returned `session`.
+4. After context compaction, resume, or a long interruption, continue through MCP. Do not switch to raw `kachilu-browser` shell commands just because prior tool calls are no longer visible.
+5. On WSL2, MCP may carry host-managed environment such as `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows`; raw shell commands can miss that setup and control the wrong browser.
+6. Use raw shell `kachilu-browser` only when MCP tools are unavailable, when the user explicitly asks for a CLI command, or when the task intentionally targets a local WSL/Linux browser.
 
-Use `eval`, raw DOM extraction, or page-internal JavaScript only when the
-visible workflow is clearly insufficient.
+Primary MCP tools are `kachilu_browser_prepare_workspace`, `kachilu_browser_exec`, and `kachilu_browser_close_workspace`. Use `prepare_workspace` first when the task clearly requires browser interaction, especially for site-specific requests such as X, LinkedIn, Yahoo, GitHub, Gmail, dashboards, admin panels, or other logged-in web workflows. Pass `site` when the target site is obvious and `initialUrl` when you already know the landing page.
 
-### CAPTCHA workflow
+Let MCP default to `workspaceMode: "new-window"` when you want the same browser profile but a separate workspace window. Use `workspaceMode: "fresh-tab"` only when you intentionally want to stay in the current browser window. Do not switch to the user's currently focused tab for normal site tasks.
 
-When a page visibly presents or recognizes a CAPTCHA, start with:
+If auto-connect cannot attach, tell the user to open Chrome, keep remote-connect enabled, approve the connection prompt, and then retry. If MCP returns `actionRequired: "retry-existing-session"`, tell the user to retry after a short wait. Do not kill the session or force a reconnect unless the session is clearly stale.
 
-```bash
-kachilu-browser captcha check
-```
-
-Do not begin with `eval`, raw DOM clicks, or image-grid handling unless
-`captcha check` has already been attempted.
-
-Direct `kachilu-browser captcha ...` access is available until 2026-05-31 as
-a launch promotion. After that date, run CAPTCHA workflows through
-`kachilu-agent-cli`, which supplies a backend-signed, session-bound capability
-token used by the browser CLI.
-
-Default order:
-
-```bash
-kachilu-browser captcha check
-kachilu-browser captcha inspect-img --json
-kachilu-browser captcha check-img --point 320 540
-kachilu-browser captcha check-img --points '[{"x":320,"y":540}]'
-```
-
-Use the image path only for `challenge_required`, `partial`, or visibly
-image-based challenges. Inspect again after each partial result because the
-challenge may change.
-
-## The core loop
+## Core Loop
 
 ```bash
 kachilu-browser open <url>        # 1. Open a page
-kachilu-browser snapshot -i       # 2. See what's on it (interactive elements only)
+kachilu-browser snapshot -i       # 2. See interactive elements with @eN refs
 kachilu-browser click @e3         # 3. Act on refs from the snapshot
-kachilu-browser snapshot -i       # 4. Re-snapshot after any page change
+kachilu-browser snapshot -i       # 4. Re-snapshot after page changes
 ```
 
-Refs (`@e1`, `@e2`, ...) are assigned fresh on every snapshot. They become
-**stale the moment the page changes** — after clicks that navigate, form
-submits, dynamic re-renders, dialog opens. Always re-snapshot before your
-next ref interaction.
-
-## Quickstart
-
-```bash
-# Install once
-npm i -g kachilu-browser && kachilu-browser install
-
-# Take a screenshot of a page
-kachilu-browser open https://example.com
-kachilu-browser screenshot home.png
-kachilu-browser close
-
-# Search, click a result, and capture it
-kachilu-browser open https://duckduckgo.com
-kachilu-browser snapshot -i                      # find the search box ref
-kachilu-browser fill @e1 "kachilu-browser cli"
-kachilu-browser press Enter
-kachilu-browser wait --load networkidle
-kachilu-browser snapshot -i                      # refs now reflect results
-kachilu-browser click @e5                        # click a result
-kachilu-browser screenshot result.png
-```
-
-The browser stays running across commands so these feel like a single
-session. Use `kachilu-browser close` (or `close --all`) when you're done.
+Refs (`@e1`, `@e2`, ...) are assigned fresh on every snapshot. They become stale the moment the page changes: after navigations, form submits, dynamic re-renders, dialogs, modals, or iframe changes.
 
 ## Reading a page
 
@@ -203,6 +147,38 @@ kachilu-browser click "button.primary"
 Rule of thumb: snapshot + `@eN` refs are fastest and most reliable for
 AI agents. `find role/text/label` is next best and doesn't require a prior
 snapshot. Raw CSS is a fallback when the others fail.
+
+If refs keep invalidating, elements live inside an iframe, or a rich text
+editor ignores DOM-oriented input, switch to the visible GUI path instead of
+repeating the same failing ref. Take an annotated screenshot, click the visible
+control, use `keyboard type` at the current focus, then re-snapshot before
+submitting.
+
+## CAPTCHA Workflow
+
+When a site visibly presents or recognizes a CAPTCHA, always start with
+`kachilu-browser captcha check`. Do not begin with `eval`, raw DOM clicks, or
+the image path unless `captcha check` has already been attempted.
+
+Direct `kachilu-browser captcha ...` access is available until 2026-05-31 as a
+launch promotion. After that date, CAPTCHA workflows must be run through
+`kachilu-agent-cli`, which supplies a backend-signed, session-bound capability
+token used by the browser CLI.
+
+Run `captcha check` first. Continue on `checked`; for `v3_token_observed`, continue the page's normal submit/result flow and verify the outcome; for `v3_possible`, perform the visible action that should trigger reCAPTCHA and check again. If the response is `challenge_required`, `partial`, or the challenge is clearly image-based, run `captcha inspect-img --json`, analyze the screenshot/crop fields, then click only selected tile centers with `captcha check-img --point ...` or `--points ...`. Inspect again if the challenge changes or remains partial.
+
+For checkbox CAPTCHAs, `captcha check` should be the first action every time.
+For reCAPTCHA v2 image-grid CAPTCHAs, inspect the challenge crop only after
+`captcha check` has escalated the flow, then select all matching tile centers.
+Do not include the verify button in `--points`; `captcha check-img` clicks the
+provided tiles with human-like movement and presses verify automatically when
+all provided tile clicks complete and the challenge is still active.
+
+For reCAPTCHA v3, there is usually no checkbox or image grid. The browser
+daemon watches `/recaptcha/api2/reload` and `/recaptcha/enterprise/reload`
+responses through CDP and reports `v3_token_observed` when the page obtains a
+recent token. Do not describe this as solving a visible challenge; it is only
+observing a token that the page acquired normally.
 
 ## Waiting (read this)
 
@@ -306,7 +282,10 @@ kachilu-browser screenshot --full full.png        # full scroll height
 kachilu-browser screenshot --annotate map.png     # numbered labels + legend keyed to snapshot refs
 ```
 
-`--annotate` is designed for multimodal models: each label `[N]` maps to ref `@eN`.
+`--annotate` is designed for multimodal models: each label `[N]` maps to ref
+`@eN`. Use it when the page has unlabeled icon buttons, visual-only elements,
+canvas/chart surfaces, or when spatial reasoning is more reliable than text
+snapshots.
 
 ### Handle multiple pages via tabs
 
@@ -437,9 +416,7 @@ Some custom input components intercept key events. Try:
 
 ```bash
 kachilu-browser focus @e1
-kachilu-browser keyboard inserttext "text"    # bypasses key events
-# or
-kachilu-browser keyboard type "text"          # raw keystrokes, no selector
+kachilu-browser keyboard type "text"          # human-like keystrokes, no selector
 ```
 
 **Page needs JS you can't get right in one shot**
@@ -479,11 +456,16 @@ and [references/authentication.md](references/authentication.md).
 --session-name <name>   # auto-save/restore session state by name
 ```
 
+Configuration can also live in `kachilu-browser.json`. Priority is:
+`~/.kachilu-browser/config.json` < `./kachilu-browser.json` < environment
+variables < CLI flags. Use `--config <path>` or `KACHILU_BROWSER_CONFIG` for a custom config file.
+
 ## Skill scope
 
-The release package ships the `core` runtime skill only. Use the normal
-snapshot-ref workflow here for browser automation, and rely on other installed
-tools or project instructions for workflows outside web pages.
+The release package ships a thin discovery skill plus the `core` runtime
+skill. Use the normal snapshot-ref workflow here for browser automation, and
+rely on other installed tools or project instructions for workflows outside web
+pages.
 
 ## Full reference
 
@@ -494,14 +476,3 @@ full bundle:
 ```bash
 kachilu-browser skills get core --full
 ```
-
-That pulls in:
-
-- `references/commands.md` — every command, flag, alias
-- `references/snapshot-refs.md` — deep dive on the snapshot + ref model
-- `references/authentication.md` — auth vault, credential handling
-- `references/session-management.md` — persistence, multi-session workflows
-- `references/profiling.md` — Chrome DevTools tracing and profiling
-- `references/video-recording.md` — video capture options
-- `references/proxy-support.md` — proxy configuration
-- `templates/*` — starter shell scripts for form automation
