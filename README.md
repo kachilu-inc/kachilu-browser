@@ -3,6 +3,13 @@
 `kachilu-browser` is an anti-bot-aware browser automation CLI for AI agents such
 as Codex and Claude.
 
+<p align="center">
+  <img src="docs/reCAPTCHA.gif" alt="Kachilu Browser detecting a reCAPTCHA challenge" width="100%">
+</p>
+
+> CAPTCHA in the way? The LLM detects it through the SKILL and hands off
+> completion automatically. Nothing complicated.
+
 Human-like interaction is the default. When reCAPTCHA v2/v3 or Cloudflare
 Turnstile appears, `kachilu-browser` detects the challenge and routes completion
 through the local CLI/browser flow.
