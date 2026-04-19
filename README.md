@@ -1,10 +1,17 @@
-# kachilu-browser
+# Kachilu Browser
 
-Public distribution repo for the Kachilu Browser CLI.
+`kachilu-browser` is an anti-bot-aware browser automation CLI for AI agents such
+as Codex and Claude.
 
-This repo is the npm distribution home for `kachilu-browser`. Native binaries built from the private source repo are bundled into the npm package when available, and `postinstall` can fall back to GitHub Releases for platforms that are not bundled yet.
+Human-like interaction is the default. When reCAPTCHA v2/v3 or Cloudflare
+Turnstile appears, `kachilu-browser` detects the challenge and routes completion
+through the local CLI/browser flow.
 
-Current synced version: `0.0.4`
+WSL2 is first-class: agents running in Linux can control the Windows-side
+browser profile you actually use, instead of a separate WSL-only browser.
+
+Free to use. Local by design. No hosted relay, no telemetry, no external control
+plane between the agent and your browser.
 
 ## Install
 
@@ -13,17 +20,9 @@ npm install -g kachilu-browser
 kachilu-browser onboard
 ```
 
-## Shell installer
+When this page appears, tick the checkbox so the agent can connect to your browser:
 
-```bash
-curl -fsSL https://github.com/kachilu-inc/kachilu-browser/releases/latest/download/install.sh | bash
-```
-
-The shell installer is the non-npm release path. It downloads the native binary
-plus the local support bundle (`scripts/` + `skills/` + `skill-data/core/`), then can
-run `kachilu-browser onboard` and `kachilu-browser skills get core`.
-Target selection and host setup live in
-`onboard`, so npm and shell installs share the same setup flow.
+![Remote debugging permission checkbox](docs/remote-debugging.png)
 
 ## Onboarding targets
 
