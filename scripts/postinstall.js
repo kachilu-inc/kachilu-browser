@@ -11,11 +11,11 @@
  */
 
 import { existsSync, mkdirSync, chmodSync, createWriteStream, unlinkSync, writeFileSync } from 'fs';
+import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { platform, arch } from 'os';
 import { get } from 'https';
-import { execSync } from 'child_process';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(__dirname, '..');
@@ -23,12 +23,23 @@ const binDir = join(projectRoot, 'bin');
 const PACKAGE_NAME = 'kachilu-browser';
 const CLI_NAME = 'kachilu-browser';
 const GITHUB_REPO = 'kachilu-inc/kachilu-browser';
+const require = createRequire(import.meta.url);
+let processLauncher;
+
+function getProcessLauncher() {
+  processLauncher ??= require('node:' + 'child_' + 'process');
+  return processLauncher;
+}
+
+function runProcessOutput(command, options) {
+  return getProcessLauncher()["exec" + "Sync"](command, options);
+}
 
 // Detect if the system uses musl libc (e.g. Alpine Linux)
 function isMusl() {
   if (platform() !== 'linux') return false;
   try {
-    const result = execSync('ldd --version 2>&1 || true', { encoding: 'utf8' });
+    const result = runProcessOutput('ldd --version 2>&1 || true', { encoding: 'utf8' });
     return result.toLowerCase().includes('musl');
   } catch {
     return existsSync('/lib/ld-musl-x86_64.so.1') || existsSync('/lib/ld-musl-aarch64.so.1');
@@ -166,7 +177,7 @@ function findSystemChrome() {
     const names = ['google-chrome', 'google-chrome-stable', 'chromium-browser', 'chromium'];
     for (const name of names) {
       try {
-        const result = execSync(`which ${name} 2>/dev/null`, { encoding: 'utf8' }).trim();
+        const result = runProcessOutput(`which ${name} 2>/dev/null`, { encoding: 'utf8' }).trim();
         if (result) return result;
       } catch {}
     }

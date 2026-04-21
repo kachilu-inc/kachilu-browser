@@ -1,9 +1,11 @@
 {
   "name": "kachilu-browser",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Browser automation CLI for AI agents",
   "type": "module",
   "files": [
+    ".codex-plugin/plugin.json",
+    ".mcp.json",
     "bin/kachilu-browser.js",
     "bin/kachilu-browser-*",
     "scripts",

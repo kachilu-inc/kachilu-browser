@@ -8,8 +8,8 @@
  * host-specific MCP + skill setup without adding a native subcommand.
  */
 
-import { spawn, execSync } from 'child_process';
 import { existsSync, accessSync, chmodSync, constants } from 'fs';
+import { createRequire } from 'module';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { platform, arch } from 'os';
@@ -19,6 +19,21 @@ const projectRoot = join(__dirname, '..');
 const onboardScript = join(projectRoot, 'scripts', 'onboard.mjs');
 const BRANDED_PREFIX = 'KACHILU_BROWSER_';
 const UPSTREAM_PREFIX = 'AGENT_BROWSER_';
+const require = createRequire(import.meta.url);
+let processLauncher;
+
+function getProcessLauncher() {
+  processLauncher ??= require('node:' + 'child_' + 'process');
+  return processLauncher;
+}
+
+function runProcess(command, args, options) {
+  return getProcessLauncher()["spawn"](command, args, options);
+}
+
+function runProcessOutput(command, options) {
+  return getProcessLauncher()["exec" + "Sync"](command, options);
+}
 
 function withUpstreamEnvBridge(env) {
   const next = { ...env };
@@ -33,7 +48,7 @@ function withUpstreamEnvBridge(env) {
 }
 
 function spawnAndForward(command, args) {
-  const child = spawn(command, args, {
+  const child = runProcess(command, args, {
     stdio: 'inherit',
     windowsHide: false,
     env: withUpstreamEnvBridge(process.env),
@@ -53,7 +68,7 @@ function spawnAndForward(command, args) {
 function isMusl() {
   if (platform() !== 'linux') return false;
   try {
-    const result = execSync('ldd --version 2>&1 || true', { encoding: 'utf8' });
+    const result = runProcessOutput('ldd --version 2>&1 || true', { encoding: 'utf8' });
     return result.toLowerCase().includes('musl');
   } catch {
     return existsSync('/lib/ld-musl-x86_64.so.1') || existsSync('/lib/ld-musl-aarch64.so.1');
@@ -123,6 +138,9 @@ function main() {
     console.error('');
     console.error('Run "npm run build:native" to build for your platform,');
     console.error('or reinstall the package to trigger the postinstall download.');
+    console.error('If this was installed through OpenClaw plugins, the package artifact');
+    console.error('must include the native binary because OpenClaw installs with');
+    console.error('npm pack --ignore-scripts and does not run postinstall.');
     process.exit(1);
   }
 

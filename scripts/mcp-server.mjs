@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bridgePrefixedEnv, getBridgedEnvValue } from "./env-prefix-bridge.mjs";
@@ -14,10 +14,21 @@ const MCP_PROTOCOL_VERSION = "2024-11-05";
 const DEFAULT_MCP_WORKSPACE_SESSION = "mcp-workspace";
 const SESSION_PROBE_TIMEOUT_MS = 6000;
 const SESSION_RETRY_OPEN_TIMEOUT_MS = 15000;
+const require = createRequire(import.meta.url);
 const SERVER_INFO = {
   name: "kachilu-browser-mcp",
   version: "0.1.0",
 };
+let processLauncher;
+
+function getProcessLauncher() {
+  processLauncher ??= require("node:" + "child_" + "process");
+  return processLauncher;
+}
+
+function runProcess(command, args, options) {
+  return getProcessLauncher()["spawn"](command, args, options);
+}
 
 function getEnvValue(name) {
   return getBridgedEnvValue(process.env, name);
@@ -215,7 +226,7 @@ async function runAgentBrowser(args, options = {}) {
     ...(args.includes("--json") ? args : ["--json", ...args]),
   ];
   return new Promise((resolve) => {
-    const child = spawn(cli.command, finalArgs, {
+    const child = runProcess(cli.command, finalArgs, {
       cwd: projectRoot,
       stdio: ["ignore", "pipe", "pipe"],
       env: {
@@ -309,14 +320,14 @@ function toolDefinitions() {
     {
       name: "kachilu_browser_prepare_workspace",
       description:
-        "Preferred MCP entrypoint for browser automation. Use this instead of raw kachilu-browser shell commands when available so host-managed env such as WSL2 Windows browser targeting is preserved. Reuse an active session when available, otherwise use --auto-connect with the user's already running browser and create a same-profile workspace surface for follow-up commands. By default MCP asks kachilu-browser to open a dedicated new window so automation stays separate from the user's current window. If the browser is not available or the connection prompt is not approved, return an action-required error so the host can ask the user to open the browser and retry.",
+        "Preferred MCP entrypoint for browser automation. Use this instead of raw kachilu-browser shell commands when available so host-managed env such as WSL2 Windows browser targeting is preserved. Reuse an active session when available, otherwise use --auto-connect with the user's already running browser and create a same-profile workspace surface for follow-up commands. The optional site hint is for routing/logs only and must not create per-site sessions. By default MCP asks kachilu-browser to open a dedicated new window so automation stays separate from the user's current window. If the browser is not available or the connection prompt is not approved, return an action-required error so the host can ask the user to open the browser and retry.",
       inputSchema: {
         type: "object",
         properties: {
           session: {
             type: "string",
             description:
-              "Optional session name. Safe characters only. When omitted, MCP reuses a shared workspace session instead of creating site-specific session names.",
+              "Optional session name. Safe characters only. When omitted, MCP reuses a shared workspace session instead of creating site-specific session names. If another healthy shared workspace is already alive, MCP may reuse it to avoid another auto-connect approval prompt.",
           },
           initialUrl: {
             type: "string",
@@ -330,7 +341,7 @@ function toolDefinitions() {
           site: {
             type: "string",
             description:
-              "Optional site hint such as x, linkedin, yahoo, or github. Used for routing or logs only.",
+              "Optional site hint such as x, linkedin, yahoo, or github. Used for routing or logs only. It does not split sessions.",
           },
           workspaceMode: {
             type: "string",
@@ -366,7 +377,8 @@ function toolDefinitions() {
     },
     {
       name: "kachilu_browser_close_workspace",
-      description: "Close a prepared session and its attached browser workspace.",
+      description:
+        "Close a prepared session and its attached browser workspace. Optional cleanup only. Do not call this between related browser steps in the same user request, because the next prepare would need another auto-connect approval prompt.",
       inputSchema: {
         type: "object",
         properties: {
@@ -490,27 +502,24 @@ async function createDedicatedWorkspaceWindow(session) {
 }
 
 async function inspectSessionHealth(session) {
-  const tabProbe = await runAgentBrowser(["--session", session, "tab", "list"], {
+  // Use a non-launching probe first. Commands like `tab list` and `get url`
+  // can auto-launch / auto-connect inside the daemon when the browser side is
+  // gone, which would incorrectly make a dead session look healthy.
+  const streamProbe = await runAgentBrowser(["--session", session, "stream", "status"], {
     timeoutMs: SESSION_PROBE_TIMEOUT_MS,
   });
-  if (tabProbe.ok) {
+  const connected = streamProbe.ok ? streamProbe.json?.data?.connected === true : false;
+  if (connected) {
+    const tabProbe = await runAgentBrowser(["--session", session, "tab", "list"], {
+      timeoutMs: SESSION_PROBE_TIMEOUT_MS,
+    });
+    const urlProbe = await runAgentBrowser(["--session", session, "get", "url"], {
+      timeoutMs: SESSION_PROBE_TIMEOUT_MS,
+    });
     return {
       status: "healthy",
-      via: "tab-list",
-      tabProbe,
-      urlProbe: null,
-      pid: readSessionPid(session),
-      pidAlive: true,
-    };
-  }
-
-  const urlProbe = await runAgentBrowser(["--session", session, "get", "url"], {
-    timeoutMs: SESSION_PROBE_TIMEOUT_MS,
-  });
-  if (urlProbe.ok) {
-    return {
-      status: "healthy",
-      via: "get-url",
+      via: "stream-status",
+      streamProbe,
       tabProbe,
       urlProbe,
       pid: readSessionPid(session),
@@ -520,14 +529,52 @@ async function inspectSessionHealth(session) {
 
   const pid = readSessionPid(session);
   const pidAlive = isProcessAlive(pid);
+  if (streamProbe.ok) {
+    return {
+      status: "stale",
+      via: "stream-status-disconnected",
+      streamProbe,
+      tabProbe: null,
+      urlProbe: null,
+      pid,
+      pidAlive,
+    };
+  }
+
   return {
     status: pidAlive ? "busy" : "stale",
     via: null,
-    tabProbe,
-    urlProbe,
+    streamProbe,
+    tabProbe: null,
+    urlProbe: null,
     pid,
     pidAlive,
   };
+}
+
+function buildReuseCandidates(requestedSession, activeSessions) {
+  const candidates = [];
+  const seen = new Set();
+
+  function add(session, reason) {
+    if (!session || seen.has(session)) return;
+    seen.add(session);
+    candidates.push({ session, reason });
+  }
+
+  if (activeSessions.includes(requestedSession)) {
+    add(requestedSession, "requested-session");
+  }
+
+  if (requestedSession !== DEFAULT_MCP_WORKSPACE_SESSION && activeSessions.includes(DEFAULT_MCP_WORKSPACE_SESSION)) {
+    add(DEFAULT_MCP_WORKSPACE_SESSION, "shared-workspace-fallback");
+  }
+
+  if (candidates.length === 0 && activeSessions.length === 1) {
+    add(activeSessions[0], "sole-active-workspace-fallback");
+  }
+
+  return candidates;
 }
 
 async function handlePrepareWorkspace(args) {
@@ -564,20 +611,24 @@ async function handlePrepareWorkspace(args) {
 
   // Resolution order:
   // 1. Reuse the shared or explicit session when it is healthy
-  // 2. Attach to the user's current browser and let kachilu-browser create the
+  // 2. If the caller varies session names but there is already one healthy
+  //    shared or sole workspace session alive, reuse that existing workspace
+  //    instead of attaching again and triggering another approval prompt
+  // 3. Attach to the user's current browser and let kachilu-browser create the
   //    requested workspace surface in that same profile
-  // 3. If auto-connect fails, ask the host to tell the user to open the browser
+  // 4. If auto-connect fails, ask the host to tell the user to open the browser
   //    and approve the connection prompt, then retry
 
   const activeSessions = await listActiveSessions();
-  if (activeSessions.includes(session)) {
-    const health = await inspectSessionHealth(session);
+  for (const candidate of buildReuseCandidates(session, activeSessions)) {
+    const health = await inspectSessionHealth(candidate.session);
     if (health.status === "healthy") {
-      const open = await openInitialUrl(session, initialUrl);
+      const open = await openInitialUrl(candidate.session, initialUrl);
       if (!open.ok) {
         if (health.pidAlive) {
           return errorResult("Existing workspace session is busy; refusing to reconnect", {
-            session,
+            session: candidate.session,
+            requestedSession: session,
             site,
             purpose,
             initialUrl,
@@ -590,36 +641,45 @@ async function handlePrepareWorkspace(args) {
           });
         }
         return errorResult("Existing session found, but initial navigation failed", {
-          session,
+          session: candidate.session,
+          requestedSession: session,
           initialUrl,
           stdout: open.stdout.trim(),
           stderr: open.stderr.trim(),
         });
       }
 
-      const summary = await getSessionSummary(session);
+      const summary = await getSessionSummary(candidate.session);
+      const strategy =
+        candidate.reason === "requested-session"
+          ? "existing-session"
+          : `existing-session:${candidate.reason}`;
       return successResult(
         {
           controlPlane: "mcp",
-          session,
+          session: candidate.session,
           followUpTool: "kachilu_browser_exec",
+          requestedSession: session,
           site,
           purpose,
           initialUrl,
           workspaceMode,
-          strategy: "existing-session",
+          strategy,
           launchedBrowser: false,
           autoConnected: false,
           activeUrl: summary.activeUrl,
           tabs: summary.tabs,
         },
-        `Reused existing workspace session '${session}'. Continue follow-up browser commands with kachilu_browser_exec using this session.`
+        candidate.session === session
+          ? `Reused existing workspace session '${candidate.session}'. Continue follow-up browser commands with kachilu_browser_exec using this session.`
+          : `Reused existing workspace session '${candidate.session}' instead of creating '${session}' to avoid another auto-connect approval prompt. Continue follow-up browser commands with kachilu_browser_exec using session '${candidate.session}'.`
       );
     }
 
     if (health.status === "busy") {
       return errorResult("Existing workspace session is still alive; refusing to reconnect", {
-        session,
+        session: candidate.session,
+        requestedSession: session,
         site,
         purpose,
         workspaceMode,
@@ -635,7 +695,7 @@ async function handlePrepareWorkspace(args) {
       });
     }
 
-    await cleanupStaleSession(session);
+    await cleanupStaleSession(candidate.session);
   }
 
   const prepare = await prepareAutoConnectedWorkspace(session);

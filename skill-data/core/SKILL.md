@@ -39,16 +39,21 @@ Before running any browser command, choose the control plane.
 
 1. If MCP tools are available, use MCP instead of shell commands.
 2. In Codex, the callable tools may be exposed as `mcp__kachilu_browser__kachilu_browser_prepare_workspace` and `mcp__kachilu_browser__kachilu_browser_exec`, or under the `mcp__agent_browser__...` server namespace with the same `kachilu_browser_*` tool names.
-3. Call `kachilu_browser_prepare_workspace` once, then use `kachilu_browser_exec` for `batch`, `snapshot`, `click`, `fill`, `wait`, and other follow-up commands. Reuse the returned `session`.
-4. After context compaction, resume, or a long interruption, continue through MCP. Do not switch to raw `kachilu-browser` shell commands just because prior tool calls are no longer visible.
-5. On WSL2, MCP may carry host-managed environment such as `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows`; raw shell commands can miss that setup and control the wrong browser.
-6. Use raw shell `kachilu-browser` only when MCP tools are unavailable, when the user explicitly asks for a CLI command, or when the task intentionally targets a local WSL/Linux browser.
+3. In OpenClaw, bundle MCP may expose provider-safe names such as `kachilu_browser__kachilu_browser_prepare_workspace` and `kachilu_browser__kachilu_browser_exec`; use those when OpenClaw presents them.
+4. Call `kachilu_browser_prepare_workspace` once, then use `kachilu_browser_exec` for `batch`, `snapshot`, `click`, `fill`, `wait`, and other follow-up commands. Reuse the returned `session`.
+5. After context compaction, resume, or a long interruption, continue through MCP. Do not switch to raw `kachilu-browser` shell commands just because prior tool calls are no longer visible.
+6. On WSL2, MCP may carry host-managed environment such as `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows`; raw shell commands can miss that setup and control the wrong browser.
+7. Use raw shell `kachilu-browser` only when MCP tools are unavailable, when the user explicitly asks for a CLI command, or when the task intentionally targets a local WSL/Linux browser.
+8. Keep the same prepared MCP session across related browser work in the same user request, even when moving from LinkedIn to X or between multiple logged-in sites. The `site` hint is for routing only; it must not create per-site sessions.
+9. Do not call `kachilu_browser_close_workspace` between related browser subtasks. Close only when the entire workflow is finished or the user explicitly wants cleanup.
 
-Primary MCP tools are `kachilu_browser_prepare_workspace`, `kachilu_browser_exec`, and `kachilu_browser_close_workspace`. Use `prepare_workspace` first when the task clearly requires browser interaction, especially for site-specific requests such as X, LinkedIn, Yahoo, GitHub, Gmail, dashboards, admin panels, or other logged-in web workflows. Pass `site` when the target site is obvious and `initialUrl` when you already know the landing page.
+Primary MCP tools are `kachilu_browser_prepare_workspace`, `kachilu_browser_exec`, and `kachilu_browser_close_workspace`. Use `prepare_workspace` first when the task clearly requires browser interaction, especially for site-specific requests such as X, LinkedIn, Yahoo, GitHub, Gmail, dashboards, admin panels, or other logged-in web workflows. Pass `site` when the target site is obvious and `initialUrl` when you already know the landing page. `site` is only a hint; it does not mean "start a separate session for this site".
 
 Let MCP default to `workspaceMode: "new-window"` when you want the same browser profile but a separate workspace window. Use `workspaceMode: "fresh-tab"` only when you intentionally want to stay in the current browser window. Do not switch to the user's currently focused tab for normal site tasks.
 
 If auto-connect cannot attach, tell the user to open Chrome, keep remote-connect enabled, approve the connection prompt, and then retry. If MCP returns `actionRequired: "retry-existing-session"`, tell the user to retry after a short wait. Do not kill the session or force a reconnect unless the session is clearly stale.
+
+If a daemon is still running but its browser connection is gone, treat that session as stale rather than reusable. The next `prepare_workspace` should reconnect instead of clinging to the dead session.
 
 ## Core Loop
 
@@ -121,6 +126,13 @@ kachilu-browser scrollintoview @e1          # scroll element into view
 kachilu-browser drag @e1 @e2                # drag and drop
 ```
 
+When using MCP `kachilu_browser_exec` with `batch`, pass each browser command
+as its own argument. The `args` array is already argv, so use
+`["batch", "fill @e1 \"Alice\"", "fill @e2 \"alice@example.com\""]`. Do not
+join multiple commands into one newline-delimited string such as
+`["batch", "fill @e1 \"Alice\"\nfill @e2 \"alice@example.com\""]`; that is
+parsed as one command and can put later commands into the first field.
+
 ### When refs don't work or you don't want to snapshot
 
 Use semantic locators:
@@ -147,6 +159,24 @@ kachilu-browser click "button.primary"
 Rule of thumb: snapshot + `@eN` refs are fastest and most reliable for
 AI agents. `find role/text/label` is next best and doesn't require a prior
 snapshot. Raw CSS is a fallback when the others fail.
+
+If `click @eN`, semantic click, or CSS click fails even though the visible
+cursor appears to be on the intended button or control, verify the visual state
+before changing strategy:
+
+```bash
+kachilu-browser screenshot /tmp/kachilu-click-state.png
+# If the screenshot/capture shows the cursor over the intended button:
+kachilu-browser mouse down left
+kachilu-browser mouse up left
+kachilu-browser snapshot -i
+```
+
+Use this current-cursor click fallback only after visual confirmation. It is
+useful for canvas-like controls, custom pointer handlers, and UI layers where
+element-targeted clicks resolve the right element but the page still ignores the
+click. Do not keep repeating the same ref click if the cursor is visibly on the
+target and the page does not respond.
 
 If refs keep invalidating, elements live inside an iframe, or a rich text
 editor ignores DOM-oriented input, switch to the visible GUI path instead of
@@ -410,6 +440,11 @@ kachilu-browser snapshot -i
 **Click does nothing / overlay swallows the click**
 Some modals and cookie banners block other clicks. Snapshot, find the
 dismiss/close button, click it, then re-snapshot.
+
+If no blocker is visible and the cursor is already on the intended button, take
+a screenshot/capture to confirm the cursor placement. When it is on target,
+click at the current cursor position with `mouse down left` then `mouse up
+left`, and re-snapshot to verify the page changed.
 
 **Fill / type doesn't work**
 Some custom input components intercept key events. Try:

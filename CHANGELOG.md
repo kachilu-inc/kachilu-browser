@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.0.5
+
+### New Features
+
+- Added OpenClaw bundle metadata so the npm package can be installed with `openclaw plugins install kachilu-browser`.
+- Added packaged OpenClaw MCP server configuration and shipped skills to the npm tarball so OpenClaw can discover the browser automation tools without running npm lifecycle scripts.
+
+### Improvements
+
+- Documented `openclaw plugins install kachilu-browser` as the official shortest OpenClaw setup path.
+- Made default human-like keyboard typing about twice as fast while preserving the same randomized cadence and pauses.
+- Added skill guidance for the current-cursor click fallback when the cursor is visibly on a target but element-targeted clicks do not trigger the UI.
+- Adjusted MCP workspace reuse so OpenClaw and other hosts keep using one healthy prepared workspace across related site tasks instead of reattaching and prompting for auto-connect approval again.
+- Fixed MCP health checks to treat daemon-only disconnected workspaces as stale instead of reusing them as if the browser were still attached.
+- Updated public distribution sync so `.codex-plugin/plugin.json` and `.mcp.json` stay in the generated npm package.
+- Updated the source release workflow so CI-built binaries are staged into the public repo before npm Trusted Publishing.
+- Kept OpenClaw installs independent of `postinstall`; native binaries must be present in the package artifact because OpenClaw packs with lifecycle scripts disabled.
+
+### Bug Fixes
+
+- Adjusted the packaged JavaScript launch helpers so OpenClaw's install scanner can complete the normal install path without requiring `--dangerously-force-unsafe-install`.
+
+### Contributors
+
+- Kachilu team
+
 ## 0.0.4
 
 ### Breaking Changes

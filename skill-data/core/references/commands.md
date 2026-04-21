@@ -110,6 +110,10 @@ kachilu-browser mouse up left           # Release button
 kachilu-browser mouse wheel 100         # Scroll wheel
 ```
 
+When a ref or locator click fails but a screenshot/capture confirms that the
+cursor is already on the intended button, use `mouse down left` followed by
+`mouse up left` to click at the current cursor position.
+
 ## Semantic Locators (alternative to refs)
 
 ```bash

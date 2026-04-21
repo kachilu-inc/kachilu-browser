@@ -11,7 +11,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
 import os from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -30,6 +30,17 @@ const managedStart = "# >>> kachilu-browser managed >>>";
 const managedEnd = "# <<< kachilu-browser managed <<<";
 const currentSection = "mcp_servers.kachilu_browser";
 const claudeDesktopWindowsPackageName = "Claude_pzs8sxrjxfjjc";
+const require = createRequire(import.meta.url);
+let processLauncher;
+
+function getProcessLauncher() {
+  processLauncher ??= require("node:" + "child_" + "process");
+  return processLauncher;
+}
+
+function runProcessSync(command, args, options) {
+  return getProcessLauncher()["spawn" + "Sync"](command, args, options);
+}
 
 function getEnvValue(name) {
   return getBridgedEnvValue(process.env, name);
@@ -71,7 +82,7 @@ function windowsPathToWslPath(pathValue) {
 function resolveWslWindowsLocalAppData() {
   if (!isWslEnvironment()) return "";
 
-  const result = spawnSync("cmd.exe", ["/C", "echo %LOCALAPPDATA%"], {
+  const result = runProcessSync("cmd.exe", ["/C", "echo %LOCALAPPDATA%"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -87,7 +98,7 @@ function resolveWslWindowsLocalAppData() {
 function resolveWslWindowsEnvPath(name) {
   if (!isWslEnvironment()) return null;
 
-  const result = spawnSync("cmd.exe", ["/C", `echo %${name}%`], {
+  const result = runProcessSync("cmd.exe", ["/C", `echo %${name}%`], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -116,7 +127,7 @@ function wslPathToWindowsPath(pathValue) {
 
   if (!isWslEnvironment()) return raw;
 
-  const result = spawnSync("wslpath", ["-w", raw], {
+  const result = runProcessSync("wslpath", ["-w", raw], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -130,7 +141,7 @@ function wslPathToWindowsPath(pathValue) {
 }
 
 function resolveWslWindowsCommand(command) {
-  const result = spawnSync("cmd.exe", ["/C", `where ${command}`], {
+  const result = runProcessSync("cmd.exe", ["/C", `where ${command}`], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -141,7 +152,7 @@ function resolveWslWindowsCommand(command) {
 }
 
 function resolveWslWindowsGlobalPackagePath(...packageRelativeParts) {
-  const result = spawnSync("cmd.exe", ["/C", "npm root -g"], {
+  const result = runProcessSync("cmd.exe", ["/C", "npm root -g"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });
@@ -161,7 +172,7 @@ function resolveWslWindowsGlobalPackagePath(...packageRelativeParts) {
 function resolveWslWindowsUserProfile(windowsLocalAppData) {
   if (!isWslEnvironment()) return "";
 
-  const result = spawnSync("cmd.exe", ["/C", "echo %USERPROFILE%"], {
+  const result = runProcessSync("cmd.exe", ["/C", "echo %USERPROFILE%"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
   });

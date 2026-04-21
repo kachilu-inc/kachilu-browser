@@ -1,24 +1,10 @@
-# Kachilu Browser
+# kachilu-browser
 
-`kachilu-browser` is an anti-bot-aware browser automation CLI for AI agents such
-as Codex and Claude.
+Public distribution repo for the Kachilu Browser CLI.
 
-<p align="center">
-  <img src="docs/reCAPTCHA.gif" alt="Kachilu Browser detecting a reCAPTCHA challenge" width="100%">
-</p>
+This repo is the npm distribution home for `kachilu-browser`. Native binaries built from the private source repo are bundled into the npm package when available, and `postinstall` can fall back to GitHub Releases for platforms that are not bundled yet.
 
-> CAPTCHA in the way? The LLM detects it through the SKILL and hands off
-> completion automatically. Nothing complicated.
-
-Human-like interaction is the default. When reCAPTCHA v2/v3 or Cloudflare
-Turnstile appears, `kachilu-browser` detects the challenge and routes completion
-through the local CLI/browser flow.
-
-WSL2 is first-class: agents running in Linux can control the Windows-side
-browser profile you actually use, instead of a separate WSL-only browser.
-
-Free to use. Local by design. No hosted relay, no telemetry, no external control
-plane between the agent and your browser.
+Current synced version: `0.0.5`
 
 ## Install
 
@@ -27,9 +13,30 @@ npm install -g kachilu-browser
 kachilu-browser onboard
 ```
 
-When this page appears, tick the checkbox so the agent can connect to your browser:
+## OpenClaw
 
-![Remote debugging permission checkbox](docs/remote-debugging.png)
+```bash
+openclaw plugins install kachilu-browser
+openclaw gateway restart
+openclaw plugins inspect kachilu-browser
+```
+
+OpenClaw installs packages with `npm pack --ignore-scripts`, so published
+artifacts used through this path must already include the native binary for the
+target platform. The bundle exposes the `kachilu_browser` MCP server and the
+packaged skills automatically.
+
+## Shell installer
+
+```bash
+curl -fsSL https://github.com/kachilu-inc/kachilu-browser/releases/latest/download/install.sh | bash
+```
+
+The shell installer is the non-npm release path. It downloads the native binary
+plus the local support bundle (`scripts/` + `skills/` + `skill-data/core/`), then can
+run `kachilu-browser onboard` and `kachilu-browser skills get core`.
+Target selection and host setup live in
+`onboard`, so npm and shell installs share the same setup flow.
 
 ## Onboarding targets
 
@@ -54,6 +61,8 @@ Successful prepare and exec responses include `controlPlane: "mcp"` and `followU
 
 - Native binaries are built from the private source repo.
 - The npm package bundles available native binaries so `npm install -g kachilu-browser` works without exposing the private source tree.
+- The OpenClaw plugin path uses the same npm package as a Codex-compatible bundle through `.codex-plugin/plugin.json` and `.mcp.json`.
+- OpenClaw installs with `npm pack --ignore-scripts`, so do not rely on `postinstall` for OpenClaw users.
 - The source repo must provide `KACHILU_BROWSER_RELEASE_TOKEN` so it can create this repo's GitHub Release and push synced tags.
 - This public repo publishes the npm package via npm Trusted Publishing after the package already exists on npm.
 - The very first npm publish for `kachilu-browser` must be done manually with `npm publish --access public`.
