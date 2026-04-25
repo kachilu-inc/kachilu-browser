@@ -108,6 +108,7 @@ kachilu-browser get count ".item"           # count matching elements
 
 ```bash
 kachilu-browser click @e1                   # click
+kachilu-browser --action-mode ax-ref click @e1  # use the legacy fast ref path
 kachilu-browser click @e1 --new-tab         # open link in new tab instead of navigating
 kachilu-browser dblclick @e1                # double-click
 kachilu-browser hover @e1                   # hover
@@ -159,6 +160,12 @@ kachilu-browser click "button.primary"
 Rule of thumb: snapshot + `@eN` refs are fastest and most reliable for
 AI agents. `find role/text/label` is next best and doesn't require a prior
 snapshot. Raw CSS is a fallback when the others fail.
+
+Hybrid mode is the default for stale-prone ref actions. It keeps the existing
+snapshot/ref workflow but fresh-resolves the target from current AX/DOM
+semantics and the last observed geometry before dispatching the coordinate
+click. Use `kachilu-browser --action-mode ax-ref click @eN` only when you want
+the legacy fast ref path.
 
 If `click @eN`, semantic click, or CSS click fails even though the visible
 cursor appears to be on the intended button or control, verify the visual state

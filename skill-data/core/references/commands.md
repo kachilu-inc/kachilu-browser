@@ -29,6 +29,7 @@ kachilu-browser snapshot -s "#main" # Scope to CSS selector
 
 ```bash
 kachilu-browser click @e1           # Click
+kachilu-browser --action-mode ax-ref click @e1 # Use the legacy fast ref path
 kachilu-browser click @e1 --new-tab # Click and open in new tab
 kachilu-browser dblclick @e1        # Double-click
 kachilu-browser focus @e1           # Focus element
@@ -288,6 +289,7 @@ kachilu-browser -p <provider> ...       # Cloud browser provider (--provider)
 kachilu-browser --proxy <url> ...       # Use proxy server
 kachilu-browser --proxy-bypass <hosts>  # Hosts to bypass proxy
 kachilu-browser --headers <json> ...    # HTTP headers scoped to URL's origin
+kachilu-browser --action-mode <mode>    # Action target mode: hybrid (default), ax-ref
 kachilu-browser --executable-path <p>   # Custom browser executable
 kachilu-browser --extension <path> ...  # Load browser extension (repeatable)
 kachilu-browser --ignore-https-errors   # Ignore SSL certificate errors
@@ -321,6 +323,7 @@ KACHILU_BROWSER_SESSION="mysession"            # Default session name
 KACHILU_BROWSER_EXECUTABLE_PATH="/path/chrome" # Custom browser path
 KACHILU_BROWSER_EXTENSIONS="/ext1,/ext2"       # Comma-separated extension paths
 KACHILU_BROWSER_PROVIDER="browserbase"         # Cloud browser provider
+KACHILU_BROWSER_ACTION_MODE="ax-ref"           # Action target mode: hybrid or ax-ref
 KACHILU_BROWSER_STREAM_PORT="9223"             # Override WebSocket streaming port (default: OS-assigned)
 KACHILU_BROWSER_HOME="/path/to/kachilu-browser"  # Custom install location
 ```

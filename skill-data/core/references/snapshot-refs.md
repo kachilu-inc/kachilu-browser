@@ -95,6 +95,14 @@ kachilu-browser snapshot -i
 # @e1 [h1] "Page 2"  ← Different element now!
 ```
 
+Hybrid targeting is the default for stale-prone ref actions. It reduces
+stale-ref misses by fresh-resolving the ref from current AX/DOM semantics and
+the last observed geometry:
+
+```bash
+kachilu-browser click @e1
+```
+
 ## Best Practices
 
 ### 1. Always Snapshot Before Interacting
