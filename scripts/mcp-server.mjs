@@ -39,6 +39,41 @@ function envFlagEnabled(name) {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
+function normalizeConnectMode(raw) {
+  const value = String(raw || "").trim().toLowerCase();
+  if (!value) return null;
+  if (["auto", "auto-connect", "autoconnect"].includes(value)) return "auto-connect";
+  if (["cdp", "dedicated-cdp", "managed-cdp"].includes(value)) return "cdp";
+  return null;
+}
+
+function normalizeCdpTarget(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  if (/^\d{1,5}$/.test(value)) return value;
+  if (/^(?:ws|wss|http|https):\/\//i.test(value)) return value;
+  if (/^[a-zA-Z0-9_.-]+:\d{1,5}$/.test(value)) return `http://${value}`;
+  return value;
+}
+
+function configuredCdpTarget() {
+  return normalizeCdpTarget(
+    getEnvValue("KACHILU_BROWSER_CDP") ||
+      getEnvValue("AGENT_BROWSER_CDP") ||
+      getEnvValue("KACHILU_AGENT_BROWSER_CDP") ||
+      getEnvValue("KACHILU_AGENT_DESKTOP_CDP_PORT")
+  );
+}
+
+function configuredConnectMode() {
+  const explicit = normalizeConnectMode(
+    getEnvValue("KACHILU_BROWSER_CONNECT_MODE") ||
+      getEnvValue("AGENT_BROWSER_CONNECT_MODE")
+  );
+  if (explicit) return explicit;
+  return configuredCdpTarget() ? "cdp" : "auto-connect";
+}
+
 function withUpstreamEnvBridge(env) {
   return bridgePrefixedEnv(env);
 }
@@ -320,14 +355,14 @@ function toolDefinitions() {
     {
       name: "kachilu_browser_prepare_workspace",
       description:
-        "Preferred MCP entrypoint for browser automation. Use this instead of raw kachilu-browser shell commands when available so host-managed env such as WSL2 Windows browser targeting is preserved. Reuse an active session when available, otherwise use --auto-connect with the user's already running browser and create a same-profile workspace surface for follow-up commands. The optional site hint is for routing/logs only and must not create per-site sessions. By default MCP asks kachilu-browser to open a dedicated new window so automation stays separate from the user's current window. If the browser is not available or the connection prompt is not approved, return an action-required error so the host can ask the user to open the browser and retry.",
+        "Preferred MCP entrypoint for browser automation. Use this instead of raw kachilu-browser shell commands when available so host-managed env such as WSL2 Windows browser targeting or a Kachilu-managed CDP endpoint is preserved. Reuse an active session when available. If KACHILU_BROWSER_CONNECT_MODE=cdp or KACHILU_BROWSER_CDP/AGENT_BROWSER_CDP is set, attach to that dedicated CDP endpoint; otherwise use --auto-connect with the user's already running browser and create a same-profile workspace surface for follow-up commands. The optional site hint is for routing/logs only and must not create per-site sessions. By default MCP asks kachilu-browser to open a dedicated new window so automation stays separate from the user's current window. If the browser is not available or the connection prompt is not approved, return an action-required error so the host can ask the user to open the browser and retry.",
       inputSchema: {
         type: "object",
         properties: {
           session: {
             type: "string",
             description:
-              "Optional session name. Safe characters only. When omitted, MCP reuses a shared workspace session instead of creating site-specific session names. If another healthy shared workspace is already alive, MCP may reuse it to avoid another auto-connect approval prompt.",
+              "Optional session name. Safe characters only. When omitted, MCP reuses a shared workspace session instead of creating site-specific session names. If another healthy shared workspace is already alive, MCP may reuse it to avoid another connection prompt.",
           },
           initialUrl: {
             type: "string",
@@ -346,7 +381,7 @@ function toolDefinitions() {
           workspaceMode: {
             type: "string",
             description:
-              "Workspace surface to prepare after auto-connect. Use 'new-window' to keep automation in a dedicated same-profile window, or 'fresh-tab' to stay in the current browser window. Defaults to 'new-window'.",
+              "Workspace surface to prepare after connecting. Use 'new-window' to keep automation in a dedicated same-profile window, or 'fresh-tab' to stay in the current browser window. Defaults to 'new-window'.",
           },
         },
         additionalProperties: false,
@@ -378,7 +413,7 @@ function toolDefinitions() {
     {
       name: "kachilu_browser_close_workspace",
       description:
-        "Close a prepared session and its attached browser workspace. Optional cleanup only. Do not call this between related browser steps in the same user request, because the next prepare would need another auto-connect approval prompt.",
+        "Close a prepared session and its attached browser workspace. Optional cleanup only. Do not call this between related browser steps in the same user request, because the next prepare may need another browser attach.",
       inputSchema: {
         type: "object",
         properties: {
@@ -459,6 +494,12 @@ function normalizeWorkspaceMode(raw) {
 
 async function prepareAutoConnectedWorkspace(session) {
   return runAgentBrowser(["--session", session, "--auto-connect", "get", "url"], {
+    timeoutMs: SESSION_RETRY_OPEN_TIMEOUT_MS,
+  });
+}
+
+async function prepareCdpWorkspace(session, cdpTarget) {
+  return runAgentBrowser(["--session", session, "--cdp", cdpTarget, "get", "url"], {
     timeoutMs: SESSION_RETRY_OPEN_TIMEOUT_MS,
   });
 }
@@ -613,13 +654,15 @@ async function handlePrepareWorkspace(args) {
   // 1. Reuse the shared or explicit session when it is healthy
   // 2. If the caller varies session names but there is already one healthy
   //    shared or sole workspace session alive, reuse that existing workspace
-  //    instead of attaching again and triggering another approval prompt
-  // 3. Attach to the user's current browser and let kachilu-browser create the
-  //    requested workspace surface in that same profile
-  // 4. If auto-connect fails, ask the host to tell the user to open the browser
-  //    and approve the connection prompt, then retry
+  //    instead of attaching again and triggering another connection prompt
+  // 3. Attach to a configured dedicated CDP endpoint, or auto-connect to the
+  //    user's current browser when no CDP endpoint is configured
+  // 4. If connection fails, ask the host to tell the user what to open/approve
+  //    and then retry
 
   const activeSessions = await listActiveSessions();
+  const connectMode = configuredConnectMode();
+  const cdpTarget = configuredCdpTarget();
   for (const candidate of buildReuseCandidates(session, activeSessions)) {
     const health = await inspectSessionHealth(candidate.session);
     if (health.status === "healthy") {
@@ -635,7 +678,7 @@ async function handlePrepareWorkspace(args) {
             workspaceMode,
             actionRequired: "retry-existing-session",
             userMessage:
-              "The existing browser connection is still alive. MCP will not reconnect because that would create another approval prompt. Wait a few seconds, then retry with the same session.",
+              "The existing browser connection is still alive. MCP will not reconnect because that would create another connection prompt. Wait a few seconds, then retry with the same session.",
             stdout: open.stdout.trim(),
             stderr: open.stderr.trim(),
           });
@@ -667,12 +710,15 @@ async function handlePrepareWorkspace(args) {
           strategy,
           launchedBrowser: false,
           autoConnected: false,
+          cdpConnected: false,
+          connectMode,
+          cdpTarget,
           activeUrl: summary.activeUrl,
           tabs: summary.tabs,
         },
         candidate.session === session
           ? `Reused existing workspace session '${candidate.session}'. Continue follow-up browser commands with kachilu_browser_exec using this session.`
-          : `Reused existing workspace session '${candidate.session}' instead of creating '${session}' to avoid another auto-connect approval prompt. Continue follow-up browser commands with kachilu_browser_exec using session '${candidate.session}'.`
+          : `Reused existing workspace session '${candidate.session}' instead of creating '${session}' to avoid another connection prompt. Continue follow-up browser commands with kachilu_browser_exec using session '${candidate.session}'.`
       );
     }
 
@@ -685,7 +731,7 @@ async function handlePrepareWorkspace(args) {
         workspaceMode,
         actionRequired: "retry-existing-session",
         userMessage:
-          "The existing browser connection is still alive. MCP will not reconnect because that would create another approval prompt. Wait briefly, then retry with the same session.",
+          "The existing browser connection is still alive. MCP will not reconnect because that would create another connection prompt. Wait briefly, then retry with the same session.",
         pid: health.pid,
         pidAlive: health.pidAlive,
         tabProbeStdout: health.tabProbe?.stdout?.trim() ?? "",
@@ -698,16 +744,39 @@ async function handlePrepareWorkspace(args) {
     await cleanupStaleSession(candidate.session);
   }
 
-  const prepare = await prepareAutoConnectedWorkspace(session);
-  if (!prepare.ok) {
-    return errorResult("Browser workspace requires user action", {
+  if (connectMode === "cdp" && !cdpTarget) {
+    return errorResult("Dedicated CDP browser is not configured", {
       session,
       site,
       purpose,
       workspaceMode,
-      actionRequired: "open-browser-and-approve-auto-connect",
+      connectMode,
+      actionRequired: "configure-dedicated-cdp",
       userMessage:
-        "Open Chrome normally, enable remote-connect, approve the auto-connect prompt, then retry.",
+        "Set KACHILU_BROWSER_CDP or AGENT_BROWSER_CDP to the Kachilu-managed browser CDP endpoint, then retry.",
+    });
+  }
+
+  const prepare =
+    connectMode === "cdp"
+      ? await prepareCdpWorkspace(session, cdpTarget)
+      : await prepareAutoConnectedWorkspace(session);
+  if (!prepare.ok) {
+    return errorResult(connectMode === "cdp" ? "Dedicated CDP browser is not reachable" : "Browser workspace requires user action", {
+      session,
+      site,
+      purpose,
+      workspaceMode,
+      connectMode,
+      cdpTarget,
+      actionRequired:
+        connectMode === "cdp"
+          ? "open-kachilu-dedicated-browser"
+          : "open-browser-and-approve-auto-connect",
+      userMessage:
+        connectMode === "cdp"
+          ? "Open the Kachilu dedicated browser so its CDP endpoint is available, then retry."
+          : "Open Chrome normally, enable remote-connect, approve the auto-connect prompt, then retry.",
       stdout: prepare.stdout.trim(),
       stderr: prepare.stderr.trim(),
       timedOut: prepare.timedOut ?? false,
@@ -749,13 +818,16 @@ async function handlePrepareWorkspace(args) {
     followUpTool: "kachilu_browser_exec",
     site,
     workspaceMode,
+    connectMode,
+    cdpTarget,
     strategy:
       workspaceMode === "new-window"
-        ? "auto-connect + dedicated same-profile workspace window"
-        : "auto-connect + fresh tab in connected browser",
+        ? `${connectMode} + dedicated same-profile workspace window`
+        : `${connectMode} + fresh tab in connected browser`,
     purpose,
     initialUrl,
-    autoConnected: true,
+    autoConnected: connectMode === "auto-connect",
+    cdpConnected: connectMode === "cdp",
     dedicatedWindowCreated: workspaceMode === "new-window",
     bootstrapTabClosed:
       workspaceMode === "new-window"

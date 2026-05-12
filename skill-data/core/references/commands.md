@@ -284,7 +284,8 @@ kachilu-browser --session <name> ...    # Isolated browser session
 kachilu-browser --json ...              # JSON output for parsing
 kachilu-browser --headed ...            # Show browser window (not headless)
 kachilu-browser --full ...              # Full page screenshot (-f)
-kachilu-browser --cdp <port> ...        # Connect via Chrome DevTools Protocol
+kachilu-browser --cdp <port|url> ...    # Connect via Chrome DevTools Protocol
+kachilu-browser --auto-connect ...      # Auto-discover and connect to running Chrome
 kachilu-browser -p <provider> ...       # Cloud browser provider (--provider)
 kachilu-browser --proxy <url> ...       # Use proxy server
 kachilu-browser --proxy-bypass <hosts>  # Hosts to bypass proxy

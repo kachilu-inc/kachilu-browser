@@ -1,5 +1,20 @@
 # Changelog
 
+### New Features
+
+- Added dedicated CDP endpoint support to the bundled MCP workspace flow. MCP can now attach through `KACHILU_BROWSER_CONNECT_MODE=cdp` plus `KACHILU_BROWSER_CDP` or `AGENT_BROWSER_CDP`, including values persisted by `kachilu-browser onboard --connect-mode cdp --cdp <port|url>`.
+- Added onboarding support for persisting `KACHILU_BROWSER_CONNECT_MODE` and `KACHILU_BROWSER_CDP` into generated MCP configs.
+
+### Bug Fixes
+
+- Fixed Chrome launches with custom `--remote-debugging-port` or `--remote-debugging-pipe` args so the default dynamic port flag no longer overrides the caller's debugging endpoint.
+
+### Contributors
+
+- Kachilu team
+
+# Changelog
+
 ## 0.0.6
 
 ### Bug Fixes

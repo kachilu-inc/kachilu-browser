@@ -370,28 +370,34 @@ Options:
   --claude-desktop-config <path>       Claude Desktop MCP config override
   --node <path|command>                Node executable/command for MCP (default: node)
   --kachilu-browser-bin <path>         Persist KACHILU_BROWSER_BIN into MCP env
+  --connect-mode <auto-connect|cdp>    Persist KACHILU_BROWSER_CONNECT_MODE into MCP env
+  --cdp <port|url>                     Persist KACHILU_BROWSER_CDP into MCP env
   --auto-connect-target <value>        Persist KACHILU_BROWSER_AUTO_CONNECT_TARGET into MCP env
   --windows-localappdata <path>        Persist KACHILU_BROWSER_WINDOWS_LOCALAPPDATA into MCP env
   --socket-dir <path>                  Persist KACHILU_BROWSER_SOCKET_DIR into MCP env
   --approval-mode <mode>               approval_mode for Codex prepare_workspace (default: approve)
+  --skill-only, --no-mcp               Install local skills only; skip MCP config and WSL auto-connect setup
   --force                              Replace an existing non-symlink skill directory
   --dry-run                            Print what would change without writing files
   --help                               Show this help
 
 Environment inputs:
   KACHILU_BROWSER_BIN
+  KACHILU_BROWSER_CONNECT_MODE
+  KACHILU_BROWSER_CDP
   KACHILU_BROWSER_AUTO_CONNECT_TARGET
   KACHILU_BROWSER_WINDOWS_LOCALAPPDATA
   KACHILU_BROWSER_SOCKET_DIR
 
 WSL2 defaults:
-  For Codex and Claude Code, if no explicit auto-connect env is provided,
-  onboard persists:
+  For Codex and Claude Code in full MCP mode, if no explicit auto-connect env
+  is provided, onboard persists:
   KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows
   KACHILU_BROWSER_WINDOWS_LOCALAPPDATA=<auto-detected via cmd.exe>
   When those WSL2 targets use Windows browsers, onboard also ensures
   %USERPROFILE%\\.wslconfig has [wsl2] networkingMode=mirrored and reports
   when WSL must be restarted.
+  These MCP and WSL steps are skipped when --skill-only/--no-mcp is used.
 `);
 }
 
@@ -466,10 +472,13 @@ async function parseArgs(argv) {
     nodePathExplicit: false,
     approvalMode: "approve",
     kachiluBrowserBin: getEnvValue("KACHILU_BROWSER_BIN"),
+    connectMode: getEnvValue("KACHILU_BROWSER_CONNECT_MODE"),
+    cdp: getEnvValue("KACHILU_BROWSER_CDP") || getEnvValue("AGENT_BROWSER_CDP"),
     autoConnectTarget: getEnvValue("KACHILU_BROWSER_AUTO_CONNECT_TARGET"),
     windowsLocalAppData: getEnvValue("KACHILU_BROWSER_WINDOWS_LOCALAPPDATA"),
     socketDir: getEnvValue("KACHILU_BROWSER_SOCKET_DIR"),
     autoDetectedEnv: {},
+    skillOnly: false,
     force: false,
     dryRun: false,
   };
@@ -510,6 +519,14 @@ async function parseArgs(argv) {
         args.kachiluBrowserBin = resolve(requireValue(argv, i, arg));
         i += 1;
         break;
+      case "--connect-mode":
+        args.connectMode = requireValue(argv, i, arg);
+        i += 1;
+        break;
+      case "--cdp":
+        args.cdp = requireValue(argv, i, arg);
+        i += 1;
+        break;
       case "--auto-connect-target":
         args.autoConnectTarget = requireValue(argv, i, arg);
         i += 1;
@@ -525,6 +542,10 @@ async function parseArgs(argv) {
       case "--approval-mode":
         args.approvalMode = requireValue(argv, i, arg);
         i += 1;
+        break;
+      case "--skill-only":
+      case "--no-mcp":
+        args.skillOnly = true;
         break;
       case "--force":
         args.force = true;
@@ -564,9 +585,11 @@ async function parseArgs(argv) {
       }
 
       if (
+        !args.skillOnly &&
         args.targets.length > 0 &&
         targetsNeedWslBridge(args.targets) &&
         isWslEnvironment() &&
+        String(args.connectMode || "").toLowerCase() !== "cdp" &&
         !args.autoConnectTarget
       ) {
         args.autoConnectTarget = await promptWithDefault(
@@ -577,9 +600,11 @@ async function parseArgs(argv) {
       }
 
       if (
+        !args.skillOnly &&
         args.targets.length > 0 &&
         targetsNeedWslBridge(args.targets) &&
         isWslEnvironment() &&
+        String(args.connectMode || "").toLowerCase() !== "cdp" &&
         args.autoConnectTarget?.toLowerCase() === "windows" &&
         !args.windowsLocalAppData
       ) {
@@ -598,9 +623,11 @@ async function parseArgs(argv) {
   }
 
   if (
+    !args.skillOnly &&
     args.targets.length > 0 &&
     targetsNeedWslBridge(args.targets) &&
     isWslEnvironment() &&
+    String(args.connectMode || "").toLowerCase() !== "cdp" &&
     !args.autoConnectTarget
   ) {
     args.autoConnectTarget = "windows";
@@ -608,9 +635,11 @@ async function parseArgs(argv) {
   }
 
   if (
+    !args.skillOnly &&
     args.targets.length > 0 &&
     targetsNeedWslBridge(args.targets) &&
     isWslEnvironment() &&
+    String(args.connectMode || "").toLowerCase() !== "cdp" &&
     args.autoConnectTarget.toLowerCase() === "windows" &&
     !args.windowsLocalAppData
   ) {
@@ -631,6 +660,8 @@ function tomlString(value) {
 function buildPersistedEnvEntries(options) {
   return [
     ["KACHILU_BROWSER_BIN", options.kachiluBrowserBin],
+    ["KACHILU_BROWSER_CONNECT_MODE", options.connectMode],
+    ["KACHILU_BROWSER_CDP", options.cdp],
     ["KACHILU_BROWSER_AUTO_CONNECT_TARGET", options.autoConnectTarget],
     ["KACHILU_BROWSER_WINDOWS_LOCALAPPDATA", options.windowsLocalAppData],
     ["KACHILU_BROWSER_SOCKET_DIR", options.socketDir],
@@ -1138,29 +1169,68 @@ function updateClaudeDesktopConfig(options) {
 function onboardCodex(options) {
   const skillTarget = join(options.codexHome, "skills", "kachilu-browser");
   ensureSkillSymlink(skillTarget, options);
+  if (options.skillOnly) {
+    return {
+      skillPath: skillTarget,
+      configPath: null,
+      mcp: {
+        status: "skipped",
+        reason: "skill-only",
+      },
+    };
+  }
+
   updateCodexConfig(options);
 
   return {
     skillPath: skillTarget,
     configPath: join(options.codexHome, "config.toml"),
+    mcp: {
+      status: "configured",
+    },
   };
 }
 
 function onboardClaudeCode(options) {
   const skillTarget = join(options.claudeHome, "skills", "kachilu-browser");
   ensureSkillSymlink(skillTarget, options);
+  if (options.skillOnly) {
+    return {
+      skillPath: skillTarget,
+      configPath: null,
+      mcp: {
+        status: "skipped",
+        reason: "skill-only",
+      },
+    };
+  }
+
   updateClaudeCodeConfig(options);
 
   return {
     skillPath: skillTarget,
     configPath: options.claudeConfig,
+    mcp: {
+      status: "configured",
+    },
   };
 }
 
 function onboardClaudeDesktop(options) {
+  if (options.skillOnly) {
+    return {
+      status: "skipped",
+      reason: "skill-only-unsupported",
+      detail: "Claude Desktop skills are installed through the Claude Desktop Skills UI; onboard has no local skill directory to write for this target.",
+      skillReleaseAsset: "kachilu-browser-skill.zip",
+      skillInstall: "Download kachilu-browser-skill.zip from the GitHub Release and upload it in Claude Desktop > Customize > Skills.",
+    };
+  }
+
   const configPath = updateClaudeDesktopConfig(options);
 
   return {
+    status: "configured",
     configPath,
     skillReleaseAsset: "kachilu-browser-skill.zip",
     skillInstall: "Download kachilu-browser-skill.zip from the GitHub Release and upload it in Claude Desktop > Customize > Skills.",
@@ -1169,23 +1239,53 @@ function onboardClaudeDesktop(options) {
 
 export async function main(argv = process.argv.slice(2)) {
   const options = await parseArgs(argv);
-  const wslNetworking = targetsNeedWslBridge(options.targets)
-    ? ensureWslMirroredNetworking(options)
-    : {
+  const mcpServer = join(repoRoot, "scripts", "mcp-server.mjs");
+  const wslNetworking = options.skillOnly
+    ? {
         status: "skipped",
-        reason: "no-wsl-bridge-target",
+        reason: "skill-only",
         restartRequired: false,
-      };
+      }
+    : targetsNeedWslBridge(options.targets)
+      ? ensureWslMirroredNetworking(options)
+      : {
+          status: "skipped",
+          reason: "no-wsl-bridge-target",
+          restartRequired: false,
+        };
   const summary = {
     targets: options.targets,
-    mcpServer: join(repoRoot, "scripts", "mcp-server.mjs"),
+    mode: options.skillOnly ? "skill-only" : "full",
+    mcpServer: options.skillOnly ? null : mcpServer,
+    mcp: options.skillOnly
+      ? {
+          status: "skipped",
+          reason: "skill-only",
+        }
+      : {
+          status: "configured",
+          server: mcpServer,
+        },
     dryRun: options.dryRun,
-    persistedEnv: {
-      KACHILU_BROWSER_BIN: options.kachiluBrowserBin || null,
-      KACHILU_BROWSER_AUTO_CONNECT_TARGET: options.autoConnectTarget || null,
-      KACHILU_BROWSER_WINDOWS_LOCALAPPDATA: options.windowsLocalAppData || null,
-      KACHILU_BROWSER_SOCKET_DIR: options.socketDir || null,
-    },
+    persistedEnv: options.skillOnly
+      ? {
+          KACHILU_BROWSER_BIN: null,
+          KACHILU_BROWSER_CONNECT_MODE: null,
+          KACHILU_BROWSER_CDP: null,
+          KACHILU_BROWSER_AUTO_CONNECT_TARGET: null,
+          KACHILU_BROWSER_WINDOWS_LOCALAPPDATA: null,
+          KACHILU_BROWSER_SOCKET_DIR: null,
+          status: "skipped",
+          reason: "skill-only",
+        }
+      : {
+          KACHILU_BROWSER_BIN: options.kachiluBrowserBin || null,
+          KACHILU_BROWSER_CONNECT_MODE: options.connectMode || null,
+          KACHILU_BROWSER_CDP: options.cdp || null,
+          KACHILU_BROWSER_AUTO_CONNECT_TARGET: options.autoConnectTarget || null,
+          KACHILU_BROWSER_WINDOWS_LOCALAPPDATA: options.windowsLocalAppData || null,
+          KACHILU_BROWSER_SOCKET_DIR: options.socketDir || null,
+        },
     autoDetectedEnv: options.autoDetectedEnv,
     wslNetworking,
     results: {},

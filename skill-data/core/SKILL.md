@@ -15,7 +15,7 @@ Most normal web tasks (navigate, read, click, fill, extract, screenshot) are cov
 
 The installed `skills/kachilu-browser/SKILL.md` is only a discovery stub. This
 core guide is the runtime source of truth for Kachilu interaction defaults,
-MCP-first routing, CAPTCHA workflow, troubleshooting, and command usage.
+control-plane routing, CAPTCHA workflow, troubleshooting, and command usage.
 
 ## Interaction Priority
 
@@ -33,25 +33,27 @@ Human-like interaction is the default and strongly preferred approach.
 
 If there is any doubt, choose the more human-like path.
 
-## MCP-First Routing
+## Control Plane Routing
 
 Before running any browser command, choose the control plane.
 
-1. If MCP tools are available, use MCP instead of shell commands.
-2. In Codex, the callable tools may be exposed as `mcp__kachilu_browser__kachilu_browser_prepare_workspace` and `mcp__kachilu_browser__kachilu_browser_exec`, or under the `mcp__agent_browser__...` server namespace with the same `kachilu_browser_*` tool names.
-3. In OpenClaw, bundle MCP may expose provider-safe names such as `kachilu_browser__kachilu_browser_prepare_workspace` and `kachilu_browser__kachilu_browser_exec`; use those when OpenClaw presents them.
-4. Call `kachilu_browser_prepare_workspace` once, then use `kachilu_browser_exec` for `batch`, `snapshot`, `click`, `fill`, `wait`, and other follow-up commands. Reuse the returned `session`.
-5. After context compaction, resume, or a long interruption, continue through MCP. Do not switch to raw `kachilu-browser` shell commands just because prior tool calls are no longer visible.
-6. On WSL2, MCP may carry host-managed environment such as `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows`; raw shell commands can miss that setup and control the wrong browser.
-7. Use raw shell `kachilu-browser` only when MCP tools are unavailable, when the user explicitly asks for a CLI command, or when the task intentionally targets a local WSL/Linux browser.
-8. Keep the same prepared MCP session across related browser work in the same user request, even when moving from LinkedIn to X or between multiple logged-in sites. The `site` hint is for routing only; it must not create per-site sessions.
-9. Do not call `kachilu_browser_close_workspace` between related browser subtasks. Close only when the entire workflow is finished or the user explicitly wants cleanup.
+1. If host or developer instructions provide a pre-attached browser session, CDP endpoint, session metadata file, or an explicit `kachilu-browser --session ... --cdp ...` command, use that exact host-provided session through the CLI.
+2. In a pre-attached session, do not call MCP `prepare_workspace`, do not auto-connect, and do not choose a different browser target. The host has already selected the browser, profile, and visible surface.
+3. If no pre-attached session is provided and MCP tools are available, use MCP instead of shell commands.
+4. In Codex, the callable tools may be exposed as `mcp__kachilu_browser__kachilu_browser_prepare_workspace` and `mcp__kachilu_browser__kachilu_browser_exec`, or under the `mcp__agent_browser__...` server namespace with the same `kachilu_browser_*` tool names.
+5. In OpenClaw, bundle MCP may expose provider-safe names such as `kachilu_browser__kachilu_browser_prepare_workspace` and `kachilu_browser__kachilu_browser_exec`; use those when OpenClaw presents them.
+6. Call `kachilu_browser_prepare_workspace` once, then use `kachilu_browser_exec` for `batch`, `snapshot`, `click`, `fill`, `wait`, and other follow-up commands. Reuse the returned `session`.
+7. After context compaction, resume, or a long interruption, continue through the same control plane that was chosen earlier. Do not switch from a host-provided session to MCP, or from MCP to raw shell commands, just because prior tool calls are no longer visible.
+8. MCP may carry host-managed environment such as `KACHILU_BROWSER_CONNECT_MODE=cdp`, `KACHILU_BROWSER_CDP`, `KACHILU_BROWSER_AUTO_CONNECT_TARGET=windows`, or `KACHILU_BROWSER_WINDOWS_LOCALAPPDATA`; raw shell commands can miss that setup and control the wrong browser.
+9. Use raw shell `kachilu-browser` only when using a host-provided session, when MCP tools are unavailable, when the user explicitly asks for a CLI command, or when the task intentionally targets a local WSL/Linux browser.
+10. Keep the same prepared MCP session across related browser work in the same user request, even when moving from LinkedIn to X or between multiple logged-in sites. The `site` hint is for routing only; it must not create per-site sessions.
+11. Do not call `kachilu_browser_close_workspace` between related browser subtasks. Close only when the entire workflow is finished or the user explicitly wants cleanup.
 
-Primary MCP tools are `kachilu_browser_prepare_workspace`, `kachilu_browser_exec`, and `kachilu_browser_close_workspace`. Use `prepare_workspace` first when the task clearly requires browser interaction, especially for site-specific requests such as X, LinkedIn, Yahoo, GitHub, Gmail, dashboards, admin panels, or other logged-in web workflows. Pass `site` when the target site is obvious and `initialUrl` when you already know the landing page. `site` is only a hint; it does not mean "start a separate session for this site".
+Primary MCP tools are `kachilu_browser_prepare_workspace`, `kachilu_browser_exec`, and `kachilu_browser_close_workspace`. When no host-provided session exists, use `prepare_workspace` first for browser interaction, especially for site-specific requests such as X, LinkedIn, Yahoo, GitHub, Gmail, dashboards, admin panels, or other logged-in web workflows. Pass `site` when the target site is obvious and `initialUrl` when you already know the landing page. `site` is only a hint; it does not mean "start a separate session for this site".
 
 Let MCP default to `workspaceMode: "new-window"` when you want the same browser profile but a separate workspace window. Use `workspaceMode: "fresh-tab"` only when you intentionally want to stay in the current browser window. Do not switch to the user's currently focused tab for normal site tasks.
 
-If auto-connect cannot attach, tell the user to open Chrome, keep remote-connect enabled, approve the connection prompt, and then retry. If MCP returns `actionRequired: "retry-existing-session"`, tell the user to retry after a short wait. Do not kill the session or force a reconnect unless the session is clearly stale.
+MCP may attach to a configured dedicated CDP endpoint or use auto-connect. Auto-connect is an MCP-managed setup path or an explicit CLI fallback, not a default override for a host-provided session. If MCP reports a missing or unreachable dedicated CDP browser, tell the user to open the host-managed browser or fix the `KACHILU_BROWSER_CDP` endpoint and then retry. If auto-connect cannot attach, tell the user to open Chrome, keep remote-connect enabled, approve the connection prompt, and then retry. If MCP returns `actionRequired: "retry-existing-session"`, tell the user to retry after a short wait. Do not kill the session or force a reconnect unless the session is clearly stale.
 
 If a daemon is still running but its browser connection is gone, treat that session as stale rather than reusable. The next `prepare_workspace` should reconnect instead of clinging to the dead session.
 
@@ -490,7 +492,7 @@ and [references/authentication.md](references/authentication.md).
 --json                  # JSON output (for machine parsing)
 --headed                # show the window (default is headless)
 --auto-connect          # connect to an already-running Chrome
---cdp <port>            # connect to a specific CDP port
+--cdp <port|url>        # connect to a specific CDP endpoint
 --profile <name|path>   # use a Chrome profile (login state survives)
 --headers <json>        # HTTP headers scoped to the URL's origin
 --proxy <url>           # proxy server
